@@ -1,0 +1,256 @@
+// CargoLens — Prisma schema (design source: isocode-preparation/04-DATABASE-AND-API.md)
+// Rules reflected here:
+//  - ASM Shuttle refs are immutable (service layer enforces; no delete endpoints exist).
+//  - One document per type per shipment: DB-level invariant (unique [shipmentId, type]).
+//  - ExtractedField uniqueness: one row per (document, fieldKey).
+//  - CrossCheck upsert per (shipment, ruleKey).
+//  - AuditEvent is insert-only by application discipline (see ADR-09).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  EXECUTIVE
+  MANAGER
+}
+
+enum ShipmentStatus {
+  DRAFT
+  PROCESSING
+  NEEDS_REVIEW
+  READY_FOR_APPROVAL
+  APPROVED
+  EXPORTED
+}
+
+enum DocType {
+  INVOICE
+  PACKING_LIST
+  BILL_OF_LADING
+}
+
+enum DocumentStatus {
+  UPLOADED
+  PROCESSING
+  PROCESSED
+  UNREADABLE
+  FAILED
+}
+
+enum FieldStatus {
+  AI_DRAFT
+  CONFIRMED
+  CORRECTED
+  MANUAL_ENTERED
+  // MANUAL_ENTERED fields have confidence = null
+}
+
+enum CheckResult {
+  PASS
+  FAIL
+  WARNING
+  SKIPPED
+}
+
+enum CheckSeverity {
+  BLOCKING
+  WARNING
+}
+
+enum AuditAction {
+  SHIPMENT_CREATED
+  DOCUMENT_UPLOADED
+  EXTRACTION_COMPLETED
+  EXTRACTION_FAILED
+  MANUAL_ENTRY
+  FIELD_CONFIRMED
+  FIELD_CORRECTED
+  CHECKS_RECOMPUTED
+  DISCREPANCY_FLAGGED
+  DISCREPANCY_RESOLVED
+  APPROVAL_GRANTED
+  APPROVAL_REVOKED
+  EXPORT_GENERATED
+  EXPORT_DOWNLOADED
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         Role     @default(EXECUTIVE)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  createdShipments Shipment[]        @relation("ShipmentCreator")
+  approvedShipments Shipment[]       @relation("ShipmentApprover")
+  confirmedFields  ExtractedField[]  @relation("FieldConfirmor")
+  resolvedChecks   CrossCheck[]      @relation("CheckResolver")
+  exports          ExportRecord[]    @relation("ExportCreator")
+  uploadedDocs     Document[]        @relation("DocUploader")
+}
+
+model Supplier {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  country   String?
+  createdAt DateTime @default(now())
+  shipments Shipment[]
+}
+
+model Shipment {
+  id          String         @id @default(uuid())
+  ref         String         @unique
+  status      ShipmentStatus @default(DRAFT)
+  supplierId  String?
+  createdById String
+  approvedById String?
+  approvedAt  DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  supplier  Supplier? @relation(fields: [supplierId], references: [id])
+  createdBy User      @relation("ShipmentCreator", fields: [createdById], references: [id])
+  approvedBy User?    @relation("ShipmentApprover", fields: [approvedById], references: [id])
+
+  documents Document[]
+  fields    ExtractedField[]
+  items     LineItem[]
+  checks    CrossCheck[]
+  audit     AuditEvent[]
+  exports   ExportRecord[]
+
+  @@index([status, updatedAt(sort: Desc)])
+}
+
+model Document {
+  id          String         @id @default(uuid())
+  shipmentId  String
+  type        DocType
+  status      DocumentStatus @default(UPLOADED)
+  storagePath String
+  fileName    String
+  mimeType    String
+  sizeBytes   BigInt
+  sha256Hex   String
+  pageCount   Int?
+  uploadedById String?
+  extractedAt DateTime?
+  extractError String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  shipment    Shipment   @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  uploadedBy  User?      @relation("DocUploader", fields: [uploadedById], references: [id])
+  fields      ExtractedField[]
+  lineItems   LineItem[]
+
+  @@unique([shipmentId, type])
+  @@index([shipmentId])
+}
+
+model ExtractedField {
+  id            String      @id @default(uuid())
+  shipmentId    String
+  documentId    String
+  fieldKey      String
+  isUnreadable  Boolean     @default(false)
+  valueText     String?
+  valueNumeric  Decimal?    @db.Decimal(14, 3)
+  valueDate     DateTime?
+  currency      String?
+  confidence    Decimal?    @db.Decimal(4, 3)
+  sourcePage    Int?
+  sourceExcerpt String?
+  status        FieldStatus @default(AI_DRAFT)
+  confirmedById String?
+  confirmedAt   DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  shipment    Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  confirmedBy User?    @relation("FieldConfirmor", fields: [confirmedById], references: [id])
+
+  @@unique([documentId, fieldKey])
+  @@index([shipmentId])
+  @@index([fieldKey])
+}
+
+model LineItem {
+  id         String  @id @default(uuid())
+  shipmentId String
+  documentId String
+  seq        Int
+  description String
+  hsnCode    String?
+  quantity   Decimal @db.Decimal(14, 3)
+  unit       String?
+  unitPrice  Decimal? @db.Decimal(14, 4)
+  lineTotal  Decimal? @db.Decimal(14, 2)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, seq])
+  @@index([shipmentId])
+}
+
+model CrossCheck {
+  id           String        @id @default(uuid())
+  shipmentId   String
+  ruleKey      String
+  result       CheckResult
+  severity     CheckSeverity
+  detailsJson  Json?
+  resolvedById String?
+  resolvedNote String?
+  resolvedAt   DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  shipment  Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  resolvedBy User?   @relation("CheckResolver", fields: [resolvedById], references: [id])
+
+  @@unique([shipmentId, ruleKey])
+}
+
+model AuditEvent {
+  id         String      @id @default(uuid())
+  shipmentId String
+  shipmentRef String     // denormalized: audit survives independent of FK chain
+  action     AuditAction
+  actorId    String?
+  actorName  String
+  payload    Json?
+  createdAt  DateTime    @default(now())
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@index([shipmentId, createdAt(sort: Desc)])
+}
+
+model ExportRecord {
+  id           String   @id @default(uuid())
+  shipmentId   String
+  createdById  String
+  formatVersion String
+  fileName     String
+  csvContent   String
+  csvSha256    String
+  createdAt    DateTime @default(now())
+
+  shipment  Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  createdBy User     @relation("ExportCreator", fields: [createdById], references: [id])
+
+  @@index([shipmentId, createdAt(sort: Desc)])
+}
