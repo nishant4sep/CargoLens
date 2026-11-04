@@ -12,7 +12,10 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@better-auth/prisma-adapter": "^1.7.16",
+    "@prisma/adapter-pg": "^7.10.1",
     "@prisma/client": "7.10.1",
+    "better-auth": "^1.7.16",
     "dotenv": "^18.0.9",
     "next": "16.4.5",
     "prisma": "7.10.1",
@@ -28,6 +31,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.4.5",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^5",
     "vitest": "^5.1.0"
   }

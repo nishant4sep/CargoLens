@@ -10,8 +10,12 @@ generator client {
   provider = "prisma-client-js"
 }
 
-/* Prisma 7+: connection URL NO LONGER lives here — it is configured in
- * prisma.config.ts (datasource.url ← env DATABASE_URL). See P1012. */
+// Prisma 7+: connection URL NO LONGER lives here — it is configured in
+// prisma.config.ts (datasource.url ← env DATABASE_URL). See P1012.
+// NOTE for future edits: keep comments as `//` lines only. `/* */` block
+// comments are tolerated by Prisma's own parser but CRASH better-auth's
+// schema parser (@mrleebo/prisma-ast) — a file read by multiple tools must
+// obey the intersection of their grammars.
 datasource db {
   provider = "postgresql"
 }
@@ -81,21 +85,87 @@ enum AuditAction {
   EXPORT_DOWNLOADED
 }
 
+// User — reconciled with better-auth@1.7.16 core schema (src/lib/auth.ts):
+//  - passwordHash REMOVED — credentials live in Account.password (providerId
+//    "credential" rows), better-auth owns hashing (scrypt) + account linking.
+//  - emailVerified + image added (better-auth core user fields).
+//  - role stays OUR enum with a DB default (inserts always succeed; the enum
+//    is the integrity boundary; auth config declares the same field as a
+//    server-owned additionalField).
+//  - @@map("user"): lowercase table = better-auth-managed table (vs our
+//    CamelCase domain tables).
 model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  passwordHash String
-  name         String
-  role         Role     @default(EXECUTIVE)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id            String   @id @default(uuid())
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  name          String
+  role          Role     @default(EXECUTIVE)
+  image         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  createdShipments Shipment[]        @relation("ShipmentCreator")
-  approvedShipments Shipment[]       @relation("ShipmentApprover")
-  confirmedFields  ExtractedField[]  @relation("FieldConfirmor")
-  resolvedChecks   CrossCheck[]      @relation("CheckResolver")
-  exports          ExportRecord[]    @relation("ExportCreator")
-  uploadedDocs     Document[]        @relation("DocUploader")
+  sessions Session[]
+  accounts Account[]
+
+  createdShipments Shipment[]       @relation("ShipmentCreator")
+  approvedShipments Shipment[]      @relation("ShipmentApprover")
+  confirmedFields  ExtractedField[] @relation("FieldConfirmor")
+  resolvedChecks   CrossCheck[]     @relation("CheckResolver")
+  exports          ExportRecord[]   @relation("ExportCreator")
+  uploadedDocs     Document[]       @relation("DocUploader")
+
+  @@map("user")
+}
+
+// Below: better-auth core tables — shapeful fields from `npx auth generate`
+// (proposal captured in .auth-schema-proposal.prisma during review), merged by
+// hand so the tool could not clobber domain models it doesn't know about.
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token])
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
 }
 
 model Supplier {
