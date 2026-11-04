@@ -19,7 +19,7 @@ result; it is intentionally kept outside this repository.
 | Layer | State |
 |---|---|
 | Pure engines (cross-checks, numeric, normalize, state machine) | ✅ Built, **59/59 unit tests passing** |
-| Prisma schema (9 domain models + 8 enums, invariants in DB constraints) | ✅ Written, migration pending (needs a Postgres instance) |
+| Prisma schema (9 domain models + 8 enums, invariants in DB constraints) | ✅ **Migrated** — `init` applied; verified 10 tables in the live DB (9 domain + `_prisma_migrations`) |
 | REST API, document storage, AI pipeline, review UI, export | ⬜ Next phases |
 | Full test suite grows per feature | planned: integration (real Postgres) + 2 Playwright E2E |
 
@@ -76,6 +76,8 @@ npm install
 
 cp .env.example .env   # fill DATABASE_URL etc. (values are per-environment, never committed)
 
+docker compose up -d   # local Postgres 16 → container cargolens-db (development only)
+
 npm run dev            # Next.js app
 npm run test           # engine unit tests (vitest)
 npm run test:watch
@@ -83,9 +85,12 @@ npm run typecheck      # tsc --noEmit
 npm run lint
 ```
 
-Database migrations and seed script land in the next phase; the schema design is
-already in `prisma/schema.prisma` (constraints like `unique(shipmentId, type)` per document
-type and `unique(documentId, fieldKey)` per field are part of the correctness story).
+Prisma is pinned exactly to **7.10.1**: the first migration (`prisma/migrations/…_init`) is
+already applied, so an empty database is provisioned with `npx prisma migrate deploy`.
+The seed script lands in the next phase. Schema design: `prisma/schema.prisma` — constraints
+like `unique(shipmentId, type)` per document type and `unique(documentId, fieldKey)` per
+field are part of the correctness story. Prisma 7 note: the connection URL is configured in
+`prisma.config.ts` (read from `.env`), no longer in the schema's `datasource` block.
 
 ## Security & privacy posture
 

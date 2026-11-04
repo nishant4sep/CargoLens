@@ -1,0 +1,28 @@
+# CargoLens — local development database ONLY.
+# Not a production topology! Production DB lives in a managed India-region Postgres
+# (see isocode-preparation/07-DEPLOYMENT-EXPLAINED.md for the verified options).
+#
+# Local-only credentials: changing them is fine, they exist only on this machine's
+# volume and are not production secrets. Production values come from env vaults.
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: cargolens-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cargolens
+      POSTGRES_PASSWORD: cargolens_dev
+      POSTGRES_DB: cargolens
+    ports:
+      - "5432:5432"
+    volumes:
+      - cargolens_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cargolens -d cargolens"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  cargolens_pgdata:
