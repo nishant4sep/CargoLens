@@ -9,7 +9,9 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:seed": "vitest run --config vitest.integration.config.mts",
+    "seed": "prisma db seed"
   },
   "dependencies": {
     "@better-auth/prisma-adapter": "^1.7.16",
