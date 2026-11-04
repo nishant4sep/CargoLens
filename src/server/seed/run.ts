@@ -25,6 +25,7 @@ import type { Prisma } from "@prisma/client";
 import { auth } from "../../lib/auth";
 import { prisma } from "../../lib/prisma";
 import { runChecks, unresolvedBlockingCount } from "../engines/crosschecks";
+import { transition } from "../engines/state-machine";
 import type { TypedFieldValue } from "../../lib/types";
 import { assertSyntheticSeed } from "./guard";
 import {
@@ -45,6 +46,7 @@ export interface SeedSummary {
   lineItemsCreated: number;
   checksCreated: number;
   auditsCreated: number;
+  statusTransitions: string[];
 }
 
 /** DB columns carry real-precision decimals; engine carries milli (×1000). */
@@ -93,6 +95,7 @@ export async function runSeed(opts: { seedFlag?: string | null } = {}): Promise<
     lineItemsCreated: 0,
     checksCreated: 0,
     auditsCreated: 0,
+    statusTransitions: [],
   };
 
   /* ---- users (better-auth owns creation + hashing) --------------------- */
@@ -252,6 +255,25 @@ export async function runSeed(opts: { seedFlag?: string | null } = {}): Promise<
         },
       });
       summary.checksCreated += 1;
+    }
+
+    /* ---- derived status: extraction completed ⇒ NEEDS_REVIEW -------------
+     * The fixtures arrive WITH processed documents, extracted fields and
+     * engine-computed checks — a shipment left in DRAFT with extraction
+     * output would violate the state machine (human writes are illegal in
+     * DRAFT, which would freeze every review screen). Derive the status
+     * through the SAME engine the product uses (never hand-bake fixture
+     * state): DRAFT → EXTRACTION_STARTED → PROCESSING → DOCS_REACHED_TERMINAL
+     * → NEEDS_REVIEW. Only from DRAFT: a kept shipment's later demo status is
+     * never regressed. */
+    const fresh = await prisma.shipment.findUniqueOrThrow({ where: { id: shipment.id } });
+    if (fresh.status === "DRAFT") {
+      const started = transition("DRAFT", { type: "EXTRACTION_STARTED" });
+      const done = started.ok ? transition(started.next, { type: "DOCS_REACHED_TERMINAL" }) : started;
+      if (done.ok) {
+        await prisma.shipment.update({ where: { id: fresh.id }, data: { status: done.next } });
+        summary.statusTransitions.push(`DRAFT → ${done.next}`);
+      }
     }
   }
 

@@ -25,8 +25,10 @@ export type ShipmentEvent =
   | { type: "EXTRACTION_STARTED" }
   /** all docs for the shipment reached a terminal per-document status */
   | { type: "DOCS_REACHED_TERMINAL" }
-  /** invariant recompute finished; blockingFails = count of unresolved BLOCKING FAILs */
-  | { type: "INVARIANTS_RECOMPUTED"; blockingFails: number }
+  /** invariant recompute finished; blockingFails = count of unresolved BLOCKING FAILs;
+   *  fieldsCleared = every ExtractedField is human-cleared (services compute; default true
+   *  so pure tests that only model check-state keep their meaning) */
+  | { type: "INVARIANTS_RECOMPUTED"; blockingFails: number; fieldsCleared?: boolean }
   | { type: "APPROVE" }
   | { type: "EXPORT" }
   | { type: "APPROVAL_REVOKED_MANUALLY" }
@@ -70,7 +72,10 @@ export function transition(status: ShipmentStatus, event: ShipmentEvent): Transi
         case "INVARIANTS_RECOMPUTED":
           return {
             ok: true,
-            next: event.blockingFails === 0 ? "READY_FOR_APPROVAL" : "NEEDS_REVIEW",
+            next:
+              event.blockingFails === 0 && event.fieldsCleared !== false
+                ? "READY_FOR_APPROVAL"
+                : "NEEDS_REVIEW",
           };
         case "EXTRACTION_STARTED":
           return { ok: true, next: "PROCESSING" }; // retry/re-extract mid-review
@@ -88,7 +93,10 @@ export function transition(status: ShipmentStatus, event: ShipmentEvent): Transi
         case "INVARIANTS_RECOMPUTED":
           return {
             ok: true,
-            next: event.blockingFails === 0 ? "READY_FOR_APPROVAL" : "NEEDS_REVIEW",
+            next:
+              event.blockingFails === 0 && event.fieldsCleared !== false
+                ? "READY_FOR_APPROVAL"
+                : "NEEDS_REVIEW",
           };
         case "EXTRACTION_STARTED":
           return { ok: true, next: "PROCESSING" };
@@ -106,7 +114,7 @@ export function transition(status: ShipmentStatus, event: ShipmentEvent): Transi
         case "EXTRACTION_STARTED":
           return { ok: true, next: "NEEDS_REVIEW", approvalRevoked: true };
         case "INVARIANTS_RECOMPUTED":
-          if (event.blockingFails > 0) {
+          if (event.blockingFails > 0 || event.fieldsCleared === false) {
             return { ok: true, next: "NEEDS_REVIEW", approvalRevoked: true };
           }
           return { ok: true, next: "APPROVED" };

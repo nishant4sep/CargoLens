@@ -55,6 +55,33 @@ export type TypedFieldValue =
 
 export type FieldValueMap = Partial<Record<FieldKey, TypedFieldValue>>;
 
+/**
+ * The field dictionary's KIND map — single source of truth for which typed kind
+ * each FieldKey carries (the seed fixtures and the API write path both consume
+ * this; engines consume the typed values produced from it).
+ */
+export const FIELD_KINDS: { [K in FieldKey]: TypedFieldValue["kind"] } = {
+  supplierName: "TEXT",
+  supplierAddress: "TEXT",
+  supplierCountry: "TEXT",
+  consigneeName: "TEXT",
+  consigneeAddress: "TEXT",
+  invoiceNumber: "TEXT",
+  invoiceDate: "DATE",
+  currency: "TEXT",
+  incoterm: "TEXT",
+  totalValue: "MONEY",
+  packagesCount: "COUNT",
+  packageType: "TEXT",
+  grossWeightKg: "WEIGHT_KG",
+  netWeightKg: "WEIGHT_KG",
+  containerNumber: "TEXT",
+  bolNumber: "TEXT",
+  vesselName: "TEXT",
+  portOfLoading: "TEXT",
+  portOfDischarge: "TEXT",
+};
+
 export interface LineItemSnapshot {
   seq: number;
   description: string;

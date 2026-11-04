@@ -14,5 +14,7 @@ export default defineConfig({
     include: ["tests/integration/**/*.test.ts"],
     exclude: ["**/node_modules/**", "**/dist/**"],
     environment: "node",
+    // DB files share one Postgres — run files sequentially for determinism.
+    fileParallelism: false,
   },
 });

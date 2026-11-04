@@ -75,3 +75,16 @@ describe("illegal operations rejected", () => {
   it("no sanitize-free approvals: DRAFT cannot be approved", () => { expectFail("DRAFT", E.approve, "NOT_READY_FOR_APPROVAL"); });
   it("PROCESSING cannot accept export", () => { expectFail("PROCESSING", E.export, "PREMATURE_EXPORT"); });
 });
+
+describe("READY gate includes the fields-cleared guard (API-era extension)", () => {
+  // fieldsCleared defaults to true so legacy events keep their meaning.
+  it("blocking 0 + fields NOT cleared stays in review", () => {
+    expectOk("NEEDS_REVIEW", { type: "INVARIANTS_RECOMPUTED", blockingFails: 0, fieldsCleared: false }, "NEEDS_REVIEW");
+  });
+  it("blocking 0 + all fields cleared becomes READY", () => {
+    expectOk("NEEDS_REVIEW", { type: "INVARIANTS_RECOMPUTED", blockingFails: 0, fieldsCleared: true }, "READY_FOR_APPROVAL");
+  });
+  it("APPROVED recompute with uncleared fields falls back + revokes", () => {
+    expectOk("APPROVED", { type: "INVARIANTS_RECOMPUTED", blockingFails: 0, fieldsCleared: false }, "NEEDS_REVIEW", true);
+  });
+});
