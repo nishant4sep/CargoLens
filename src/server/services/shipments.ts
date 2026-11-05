@@ -41,7 +41,26 @@ export async function listShipments(dto: ListShipmentsInput) {
     }),
     prisma.shipment.count({ where }),
   ]);
-  return { items, page: dto.page, total, hasMore: dto.page * PAGE_SIZE < total };
+
+  // Dashboard needs the blocking-discrepancy count per row (PRD screen 2's
+  // unresolved ⚠). One groupBy over the page's shipments — no N+1 — merged
+  // into the items additively (rows 4 contract: {items,page,total,hasMore}).
+  const ids = items.map((i) => i.id);
+  const blocking = ids.length
+    ? await prisma.crossCheck.groupBy({
+        by: ["shipmentId"],
+        where: { shipmentId: { in: ids }, result: "FAIL", severity: "BLOCKING", resolvedAt: null },
+        _count: { _all: true },
+      })
+    : [];
+  const blockingByShipment = new Map(blocking.map((b) => [b.shipmentId, b._count._all]));
+
+  return {
+    items: items.map((i) => ({ ...i, blockingFails: blockingByShipment.get(i.id) ?? 0 })),
+    page: dto.page,
+    total,
+    hasMore: dto.page * PAGE_SIZE < total,
+  };
 }
 
 export async function createShipment(user: AuthUser, dto: CreateShipmentInput) {
