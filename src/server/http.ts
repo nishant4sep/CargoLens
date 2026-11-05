@@ -113,6 +113,16 @@ export function toErrorResponse(e: unknown): NextResponse {
       { status: STATUS[code] },
     );
   }
+  // Next's build-time prerender bail-out ("needs to bail out of prerendering
+  // … used request.headers") surfaces here when `next build` dry-runs GET
+  // route handlers. Expected by design (every endpoint is request-dependent);
+  // NOT an incident, so don't mislabel it as an internal error.
+  if (e instanceof Error && e.message.includes("bail out of prerendering")) {
+    return NextResponse.json(
+      { error: { code: "INTERNAL", message: "Unexpected server error" } },
+      { status: 500 },
+    );
+  }
   // Server-side log keeps a short message only (no bodies, no stack dumps to clients).
   console.error("[api] internal error:", e instanceof Error ? e.message : String(e));
   return NextResponse.json(
@@ -127,9 +137,14 @@ export type AuthUser = { id: string; name: string; email: string; role: "EXECUTI
  * Server-side session resolution for EVERY protected route (file 04 §4:
  * "every mutating route re-checks auth server-side"). Reads the better-auth
  * cookie via the library's own server API — no homemade token parsing.
+ *
+ * The Headers-based core is the ONE implementation: routes pass `req.headers`,
+ * Server Components pass `await headers()` (via @/server/session). The RSC
+ * wrapper lives in its own file so test-importable modules never pull in
+ * `next/headers` (which only works inside a request render).
  */
-export async function getSessionUser(req: Request): Promise<AuthUser | null> {
-  const session = await auth.api.getSession({ headers: req.headers });
+export async function getSessionUserFromHeaders(h: Headers): Promise<AuthUser | null> {
+  const session = await auth.api.getSession({ headers: h });
   if (!session?.user) return null;
   return {
     id: session.user.id,
@@ -137,6 +152,10 @@ export async function getSessionUser(req: Request): Promise<AuthUser | null> {
     email: session.user.email,
     role: session.user.role as AuthUser["role"],
   };
+}
+
+export async function getSessionUser(req: Request): Promise<AuthUser | null> {
+  return getSessionUserFromHeaders(req.headers);
 }
 
 /** Body reader that never throws — malformed JSON becomes a Zod 400, not a 500. */
