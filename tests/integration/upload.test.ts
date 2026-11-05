@@ -11,11 +11,11 @@
  * token route accepts ONLY a valid unexpired HMAC token (S3-presigned model).
  */
 import "dotenv/config";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -209,6 +209,25 @@ describe("upload authorization & validation (row 8)", () => {
     expect(await jsonOf(res)).toMatchObject({ error: { code: "CONFLICT" } });
     expect(await prisma.document.count({ where: { shipmentId, type: "INVOICE" } })).toBe(1);
   });
+
+  it("STORAGE→DB rollback: a transaction failure after the storage write leaves NO file and NO row", async () => {
+    // Force the write-order's second half to fail (storage write already done):
+    // the route must run its orphan cleanup (removeDocument) — no orphans, no
+    // partial records (06 §1.3's documented order, proven here). The storage
+    // dir legitimately holds earlier uploads' files, so the proof is that the
+    // listing is IDENTICAL after the failed attempt (the attempted file gone).
+    const dirBefore = readdirSync(storageDir);
+    const txSpy = vi.spyOn(prisma, "$transaction").mockRejectedValueOnce(new Error("simulated tx failure"));
+    const res = await uploadRoute.POST(
+      req(`/api/shipments/${shipmentId}/documents`, { method: "POST", body: multipart("PACKING_LIST", PDF_HEAD, "pl.pdf"), cookie: execCookie }),
+      ctx({ id: shipmentId }),
+    );
+    txSpy.mockRestore();
+    expect(res.status).toBe(500); // an unexpected failure keeps the 8-code envelope
+    expect(await jsonOf(res)).toMatchObject({ error: { code: "INTERNAL" } });
+    expect(await prisma.document.count({ where: { shipmentId, type: "PACKING_LIST" } })).toBe(0);
+    expect(readdirSync(storageDir)).toEqual(dirBefore); // the orphan was removed — disk unchanged
+  });
 });
 
 describe("signed-file access (row 11 + the /api/files capability route)", () => {
@@ -259,5 +278,18 @@ describe("signed-file access (row 11 + the /api/files capability route)", () => 
     const stream = await fileStreamRoute.GET(req(`/api/files/${token}`), ctx({ token }));
     const bytes = Buffer.from(await stream.arrayBuffer());
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(doc.sha256Hex);
+  });
+});
+
+describe("the state machine owns the write path (P4.3: upload can't bypass it)", () => {
+  it("upload to an EXPORTED shipment → 409 (EXPORTED is terminal — no document writes)", async () => {
+    await prisma.shipment.update({ where: { id: shipmentId }, data: { status: "EXPORTED" } });
+    const res = await uploadRoute.POST(
+      req(`/api/shipments/${shipmentId}/documents`, { method: "POST", body: multipart("BILL_OF_LADING", PDF_HEAD, "bol.pdf"), cookie: execCookie }),
+      ctx({ id: shipmentId }),
+    );
+    expect(res.status).toBe(409);
+    expect(await jsonOf(res)).toMatchObject({ error: { code: "CONFLICT" } });
+    expect(await prisma.document.count({ where: { shipmentId, type: "BILL_OF_LADING" } })).toBe(0);
   });
 });

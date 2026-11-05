@@ -203,18 +203,50 @@ export async function manualEntry(user: AuthUser, documentId: string, dto: Manua
     const doc = await tx.document.findUnique({ where: { id: documentId }, include: { shipment: true } });
     if (!doc) throw new ApiError("NOT_FOUND", "Document not found", { documentId });
     const shipment = doc.shipment;
+    let status = shipment.status as ShipmentStatus;
 
-    await applyHumanWrite(tx, shipment, user); // manual entry is a human write (409 when EXPORTED)
+    // D-1b (approved Phase-4 plan): until Phase-5 AI exists, manual entry IS
+    // the extraction. A DRAFT shipment's FIRST manual entry fires the
+    // machine's OWN EXTRACTION_STARTED (DRAFT → PROCESSING, audited) — the
+    // machine table is untouched.
+    if (status === "DRAFT") {
+      const started = transition(status, { type: "EXTRACTION_STARTED" });
+      if (!started.ok) throw new ApiError("CONFLICT", started.reason, { status }); // machine owns the rule
+      await tx.shipment.update({ where: { id: shipment.id }, data: { status: started.next } });
+      await writeAudit(tx, {
+        shipmentId: shipment.id,
+        shipmentRef: shipment.ref,
+        action: "EXTRACTION_STARTED",
+        actorId: user.id,
+        actorName: user.name,
+        payload: { via: "MANUAL_ENTRY", documentId },
+      });
+      status = started.next;
+    } else if (status !== "PROCESSING") {
+      // Post-extraction statuses: the write IS a HUMAN_WRITE (self-loop in
+      // NEEDS_REVIEW, re-open in READY, revocation in APPROVED, 409 in
+      // EXPORTED) — exactly the machine's own rules.
+      status = await applyHumanWrite(tx, shipment, user);
+    }
+    // else PROCESSING: manual entry IS the extraction in progress (D-1b, the
+    // seed's own precedent — fields are written between EXTRACTION_STARTED
+    // and DOCS_REACHED_TERMINAL). The machine's HUMAN_WRITE-in-PROCESSING
+    // block guards corrections, not extraction-phase entry; no state event
+    // fires for the write itself. DOCS_REACHED_TERMINAL below ends the phase.
 
     const written: string[] = [];
     for (const f of dto.fields) {
       const existing = await tx.extractedField.findUnique({
         where: { documentId_fieldKey: { documentId, fieldKey: f.fieldKey } },
       });
-      const columns: CorrectionColumns =
-        existing && isFieldKey(f.fieldKey)
-          ? parseCorrection(f.fieldKey, { currency: existing.currency }, f.value)
-          : { valueText: f.value };
+      // D-1b: on a fresh shipment these fields are NEW — they must STILL be
+      // normalized by the field dictionary's kind (dates → valueDate, money →
+      // valueNumeric at milli) or the engine would read zeros from valueText
+      // dumps. The DTO's fieldKey is a closed enum, so parseCorrection applies
+      // to every manual-entry value; the fallback is unreachable belt-and-braces.
+      const columns: CorrectionColumns = isFieldKey(f.fieldKey)
+        ? parseCorrection(f.fieldKey, { currency: existing?.currency ?? null }, f.value)
+        : { valueText: f.value };
       const data = {
         ...columns,
         status: "MANUAL_ENTERED" as const,
@@ -259,16 +291,54 @@ export async function manualEntry(user: AuthUser, documentId: string, dto: Manua
       });
     }
 
+    // D-1b: a manually-entered document is extraction by hand — mark it
+    // terminal (PROCESSED + extractedAt) so the engine's readability gate
+    // (snapshots: readable = status PROCESSED) and the terminal count below
+    // reflect reality. Idempotent: re-entry keeps the FIRST extractedAt.
+    await tx.document.update({
+      where: { id: documentId },
+      data: { status: "PROCESSED", extractedAt: doc.extractedAt ?? new Date() },
+    });
+
     await writeAudit(tx, {
       shipmentId: doc.shipmentId,
       shipmentRef: doc.shipment.ref,
       action: "MANUAL_ENTRY",
       actorId: user.id,
       actorName: user.name,
-      payload: { documentId, fieldKeys: written, lineItems: (dto.lineItems ?? []).length },
+      payload: { documentId, fieldKeys: written, lineItems: (dto.lineItems ?? []).length, docStatus: "PROCESSED" },
     });
-    const { status } = await recomputeInTx(tx, { id: shipment.id, ref: shipment.ref, status: shipment.status as ShipmentStatus }, user);
-    return { status, written };
+
+    // D-1b: when the LAST document reaches a terminal per-document status,
+    // fire the machine's DOCS_REACHED_TERMINAL (PROCESSING → NEEDS_REVIEW).
+    // A partial entry set leaves the shipment in PROCESSING — no skipping.
+    if (status === "PROCESSING") {
+      const [total, terminal] = await Promise.all([
+        tx.document.count({ where: { shipmentId: doc.shipmentId } }),
+        tx.document.count({
+          where: { shipmentId: doc.shipmentId, status: { in: ["PROCESSED", "UNREADABLE", "FAILED"] } },
+        }),
+      ]);
+      if (total > 0 && terminal === total) {
+        const done = transition("PROCESSING", { type: "DOCS_REACHED_TERMINAL" });
+        if (!done.ok) throw new ApiError("CONFLICT", done.reason, { status }); // machine owns the rule
+        await tx.shipment.update({ where: { id: shipment.id }, data: { status: done.next } });
+        await writeAudit(tx, {
+          shipmentId: doc.shipmentId,
+          shipmentRef: doc.shipment.ref,
+          action: "DOCS_REACHED_TERMINAL",
+          actorId: user.id,
+          actorName: user.name,
+          payload: { via: "MANUAL_ENTRY", documents: total },
+        });
+        status = done.next;
+      }
+    }
+
+    // Recompute from the CURRENT status (post-transition) — INVARIANTS_RECOMPUTED
+    // in NEEDS_REVIEW is what lifts a fully-clean shipment to READY_FOR_APPROVAL.
+    const rec = await recomputeInTx(tx, { id: shipment.id, ref: shipment.ref, status }, user);
+    return { status: rec.status, written };
   });
 }
 

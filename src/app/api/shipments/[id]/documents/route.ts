@@ -40,6 +40,12 @@ export async function POST(req: Request, ctx: Ctx) {
     if (!user) throw new ApiError("UNAUTHENTICATED", "Sign in required");
     const { id } = await ctx.params;
     const shipment = await requireShipment(id); // 404
+    // The state machine's own docstring: EXPORTED is terminal — no field or
+    // DOCUMENT writes afterwards. Enforced here so the storage seam can never
+    // become a side door around the machine (06 §1.3 write-path discipline).
+    if (shipment.status === "EXPORTED") {
+      throw new ApiError("CONFLICT", "Shipment is exported; documents can no longer change", { status: shipment.status });
+    }
 
     const contentType = req.headers.get("content-type") ?? "";
     if (!contentType.includes("multipart/form-data")) {
