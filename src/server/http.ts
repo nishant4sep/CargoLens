@@ -41,9 +41,16 @@ const STATUS: Record<ApiErrorCode, number> = {
 /** better-auth's session cookie (library default name — we must match it). */
 export const SESSION_COOKIE = "better-auth.session_token";
 
-/** Services throw this; `toErrorResponse` translates it to the contract envelope. */
+/** Services throw this; `toErrorResponse` translates it to the contract envelope.
+ *  `statusOverride` is for the rare status a code doesn't pin (e.g. 413 with the
+ *  VALIDATION_ERROR code — the code set stays at 8, the HTTP status stays precise). */
 export class ApiError extends Error {
-  constructor(readonly code: ApiErrorCode, message: string, readonly details?: unknown) {
+  constructor(
+    readonly code: ApiErrorCode,
+    message: string,
+    readonly details?: unknown,
+    readonly statusOverride?: number,
+  ) {
     super(message);
   }
 }
@@ -58,7 +65,7 @@ export function toErrorResponse(e: unknown): NextResponse {
           ...(e.details !== undefined ? { details: e.details } : {}),
         },
       },
-      { status: STATUS[e.code] },
+      { status: e.statusOverride ?? STATUS[e.code] },
     );
   }
   if (e instanceof ZodError) {

@@ -40,3 +40,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# private document storage (dev/demo driver; never public, never committed)
+/.storage
