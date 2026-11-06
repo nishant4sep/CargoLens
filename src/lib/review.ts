@@ -8,7 +8,9 @@
  *
  * Everything here is PURE and unit-tested; components stay dumb.
  */
-import { FIELD_KINDS, isFieldKey, type DocType, type FieldKey, type TypedFieldValue } from "@/lib/types";
+import { DOC_TYPES, FIELD_KINDS, isFieldKey, type DocType, type FieldKey, type TypedFieldValue } from "@/lib/types";
+import { documentTypeLabel, formatBytes } from "@/lib/format";
+import { REQUIRED_FIELD_KEYS } from "@/server/engines/crosschecks";
 
 /* --------------------------------- types --------------------------------- */
 
@@ -307,4 +309,173 @@ const CHECK_STATUS_LABELS: Record<string, string> = {
 
 export function checkStatusLabel(status: string): string {
   return CHECK_STATUS_LABELS[status] ?? status;
+}
+
+/* ------------------- approval + export gates (P4.5) ----------------------- */
+
+export type ViewerRole = "EXECUTIVE" | "MANAGER";
+
+/** Derived STRICTLY from the machine's own table (state-machine.ts): the
+ *  APPROVE event exists only from READY_FOR_APPROVAL, and the approve ROUTE
+ *  additionally requires MANAGER (row 14 — 403 otherwise). The server is the
+ *  truth; this only keeps a forbidden button off the screen. */
+export function canApprove(status: string, role: ViewerRole): boolean {
+  return role === "MANAGER" && status === "READY_FOR_APPROVAL";
+}
+
+/** The machine's EXPORT event exists only from APPROVED (ERR
+ *  "PREMATURE_EXPORT"). NOTE (row 16 contract): the export ROUTE has NO role
+ *  check — any signed-in user may export an APPROVED shipment. Deliberately
+ *  NO role parameter here: inventing one would lie about the server. */
+export function canExport(status: string): boolean {
+  return status === "APPROVED";
+}
+
+/* --------------------- approval readiness summary ------------------------- */
+
+/** What the approval panel displays, derived from the row-6 aggregate plus the
+ *  engine's own required-field seam — a HUMAN summary, never a second gate:
+ *  the server's approve/export 409s remain the only enforcement. */
+export interface ApprovalReadiness {
+  /** (docType, fieldKey) pairs the ENGINE requires that are not human-cleared
+   *  yet — absent row, missing document, or still AI_DRAFT (the same
+   *  "uncleared" definition the export gate's missingCriteria uses). */
+  outstanding: Array<{ docType: DocType; fieldKey: string }>;
+  /** required document types with no upload at all (their fields are in
+   *  `outstanding` too) */
+  missingDocs: DocType[];
+  /** unresolved BLOCKING FAIL rule keys — the criteria the machine's APPROVE
+   *  gate reads (the 409's missingCriteria.unresolvedBlockingChecks) */
+  blocking: string[];
+  /** fields with CORRECTED provenance */
+  corrections: number;
+  /** checks currently accepted-with-note (resolvedAt set; a re-fail clears it) */
+  resolutions: number;
+}
+
+export interface ReadinessInput {
+  documents: ReadonlyArray<{ type: string }>;
+  fields: ReadonlyArray<{ documentType: string; fieldKey: string; status: string }>;
+  checks: ReadonlyArray<{ ruleKey: string; result: string; severity: string; resolvedAt: string | null }>;
+}
+
+export function approvalReadiness(input: ReadinessInput): ApprovalReadiness {
+  const missingDocs = DOC_TYPES.filter((t) => !input.documents.some((d) => d.type === t));
+  const outstanding: Array<{ docType: DocType; fieldKey: string }> = [];
+  for (const docType of DOC_TYPES) {
+    const rows = input.fields.filter((f) => f.documentType === docType);
+    for (const fieldKey of REQUIRED_FIELD_KEYS[docType]) {
+      const row = rows.find((f) => f.fieldKey === fieldKey);
+      if (!row || row.status === "AI_DRAFT") outstanding.push({ docType, fieldKey });
+    }
+  }
+  return {
+    outstanding,
+    missingDocs,
+    blocking: input.checks
+      .filter((c) => c.result === "FAIL" && c.severity === "BLOCKING" && c.resolvedAt === null)
+      .map((c) => c.ruleKey),
+    corrections: input.fields.filter((f) => f.status === "CORRECTED").length,
+    resolutions: input.checks.filter((c) => c.resolvedAt !== null).length,
+  };
+}
+
+/* ----------------------------- audit rendering ---------------------------- */
+
+/** Presentation-only hash truncation — the payload keeps the full value; 12
+ *  hex chars is enough to correlate a row with the export record. */
+function shortHash(s: string): string {
+  return s.length > 12 ? `${s.slice(0, 12)}…` : s;
+}
+
+/** One detail line per audit event, rendered ONLY from the payload keys the
+ *  services actually write (verified against every writeAudit call site).
+ *  Unknown actions render their scalar entries generically; hash truncation is
+ *  the only transformation, no payload key is reinterpreted. */
+export function auditSummary(action: string, payload: unknown): string | null {
+  if (payload === null || typeof payload !== "object") return null;
+  const p = payload as Record<string, unknown>;
+  const str = (k: string): string | null => (typeof p[k] === "string" && p[k] !== "" ? (p[k] as string) : null);
+  const num = (k: string): number | null => (typeof p[k] === "number" ? (p[k] as number) : null);
+  switch (action) {
+    case "SHIPMENT_CREATED":
+      return [str("ref"), str("source") ? `via ${str("source")}` : null].filter(Boolean).join(" · ") || null;
+    case "DOCUMENT_UPLOADED": {
+      const size = num("sizeBytes");
+      return [
+        str("type") ? documentTypeLabel(str("type") as string) : null,
+        size !== null ? formatBytes(size) : null,
+        str("sha256Hex") ? `sha ${shortHash(str("sha256Hex") as string)}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ") || null;
+    }
+    case "EXTRACTION_STARTED":
+      return str("via") ? `via ${str("via")}` : null;
+    case "DOCS_REACHED_TERMINAL": {
+      const docs = num("documents");
+      return (
+        [str("via") ? `via ${str("via")}` : null, docs !== null ? `${docs} documents` : null]
+          .filter(Boolean)
+          .join(" · ") || null
+      );
+    }
+    case "MANUAL_ENTRY": {
+      const keys = Array.isArray(p.fieldKeys) ? p.fieldKeys.length : null;
+      const lines = typeof p.lineItems === "number" ? p.lineItems : Array.isArray(p.lineItems) ? p.lineItems.length : null;
+      return (
+        [
+          str("docStatus"),
+          keys !== null ? `${keys} field${keys === 1 ? "" : "s"}` : null,
+          lines !== null ? `${lines} line item${lines === 1 ? "" : "s"}` : null,
+        ]
+          .filter(Boolean)
+          .join(" · ") || null
+      );
+    }
+    case "FIELD_CONFIRMED":
+      return str("fieldKey") ? fieldLabel(str("fieldKey") as string) : null;
+    case "FIELD_CORRECTED":
+      return `${str("fieldKey") ? fieldLabel(str("fieldKey") as string) : "field"}: ${str("from") ?? "?"} → ${str("to") ?? "?"}`;
+    case "CHECKS_RECOMPUTED": {
+      const fails = num("blockingFails");
+      const parts: string[] = [];
+      if (fails !== null) parts.push(`blockingFails: ${fails}`);
+      if (typeof p.fieldsCleared === "boolean") parts.push(`fieldsCleared: ${p.fieldsCleared}`);
+      if (Array.isArray(p.results)) parts.push(`${p.results.length} checks`);
+      return parts.join(" · ") || null;
+    }
+    case "DISCREPANCY_RESOLVED":
+      return (
+        [str("ruleKey") ? checkTitle(str("ruleKey") as string) : null, str("note") ? `“${str("note")}”` : null]
+          .filter(Boolean)
+          .join(" — ") || null
+      );
+    case "APPROVAL_GRANTED":
+      return str("ref");
+    case "APPROVAL_REVOKED":
+      // Raw reason code, no interpretation — the machine's own vocabulary.
+      return str("reason") ? `reason: ${str("reason")}` : null;
+    case "EXPORT_GENERATED":
+      return (
+        [
+          str("fileName"),
+          str("csvSha256") ? `sha ${shortHash(str("csvSha256") as string)}` : null,
+          num("bytes") !== null ? formatBytes(num("bytes") as number) : null,
+        ]
+          .filter(Boolean)
+          .join(" · ") || null
+      );
+    case "EXPORT_DOWNLOADED":
+      return str("fileName");
+    default: {
+      // Unknown-but-real payload: its scalar entries, generically.
+      return (
+        Object.entries(p)
+          .filter(([, v]) => ["string", "number", "boolean"].includes(typeof v))
+          .map(([k, v]) => `${k}: ${v}`)
+          .join(" · ") || null
+      );
+    }
+  }
 }

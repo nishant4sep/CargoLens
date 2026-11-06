@@ -7,14 +7,18 @@
  *
  * Validation REUSES the server's own Zod contract (`CreateShipmentDto`) —
  * one source of truth for shape, so client and API can never disagree.
- * Duplicate submissions are prevented two ways: the submit button disables
- * while pending, and a synchronous in-flight ref guard stops double-fires
- * that beat the state update. Success navigates to the created shipment.
+ * Duplicate submissions are impossible by construction (P4.5): the pure
+ * submit-guard's begin() is an atomic check-and-set (two synchronous clicks
+ * cannot both win), end() releases FAILED attempts, and done() blocks
+ * permanently after success — a click landing between the response and
+ * navigation hits a closed door until the dialog closes (reset on close()).
+ * The disabled button is UX, not the mechanism. Success navigates.
  */
 import { useRouter } from "next/navigation";
 import { useRef, useState, type FormEvent } from "react";
 import { CreateShipmentDto } from "@/server/dto";
 import { parseEnvelope } from "@/lib/envelope";
+import { createSubmitGuard } from "@/lib/submit-guard";
 import { ErrorBanner } from "@/components/states";
 
 export function NewShipmentButton({ label = "New shipment" }: { label?: string }) {
@@ -25,7 +29,7 @@ export function NewShipmentButton({ label = "New shipment" }: { label?: string }
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<{ code?: string; message: string } | null>(null);
   const [pending, setPending] = useState(false);
-  const inFlight = useRef(false);
+  const guard = useRef(createSubmitGuard()).current;
 
   function close() {
     setOpen(false);
@@ -33,13 +37,13 @@ export function NewShipmentButton({ label = "New shipment" }: { label?: string }
     setSupplierCountry("");
     setFieldErrors({});
     setFormError(null);
-    inFlight.current = false;
+    guard.reset(); // a fresh dialog is a fresh submit opportunity
     setPending(false);
   }
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (inFlight.current) return; // double-click / Enter replay can't fire twice
+    if (!guard.begin()) return; // atomic: double-click, Enter replay, or already created
     setFormError(null);
     setFieldErrors({});
 
@@ -49,6 +53,7 @@ export function NewShipmentButton({ label = "New shipment" }: { label?: string }
     };
     const parsed = CreateShipmentDto.safeParse(payload);
     if (!parsed.success) {
+      guard.end(); // validation failure — re-arm for the user's next attempt
       const errs: Record<string, string> = {};
       for (const issue of parsed.error.issues) {
         errs[String(issue.path[0] ?? "form")] = issue.message;
@@ -57,7 +62,6 @@ export function NewShipmentButton({ label = "New shipment" }: { label?: string }
       return;
     }
 
-    inFlight.current = true;
     setPending(true);
     try {
       const res = await fetch("/api/shipments", {
@@ -67,6 +71,7 @@ export function NewShipmentButton({ label = "New shipment" }: { label?: string }
       });
       const envelope = await parseEnvelope<{ shipment: { id: string; ref: string } }>(res);
       if (!envelope.ok) {
+        guard.end(); // server rejected — retry is legitimate
         // Surface the API's own validation details per field when present.
         const details = envelope.error.details as { issues?: Array<{ path: string[]; message: string }> } | undefined;
         if (details?.issues?.length) {
@@ -77,12 +82,13 @@ export function NewShipmentButton({ label = "New shipment" }: { label?: string }
         setFormError({ code: envelope.error.code, message: envelope.error.message });
         return;
       }
+      guard.done(); // exactly ONE creation per dialog open — no further submit until close()
       router.push(`/shipments/${envelope.data.shipment.id}`);
       router.refresh();
     } catch {
+      guard.end();
       setFormError({ code: "NETWORK", message: "Could not reach the server. Try again." });
     } finally {
-      inFlight.current = false;
       setPending(false);
     }
   }

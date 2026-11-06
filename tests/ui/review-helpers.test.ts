@@ -5,6 +5,10 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  approvalReadiness,
+  auditSummary,
+  canApprove,
+  canExport,
   checkDetailRows,
   checkTitle,
   confidencePercent,
@@ -229,5 +233,133 @@ describe("titles + status labels", () => {
     expect(checkTitle("INVOICE_TOTAL")).toBe("Invoice total vs line sum");
     expect(checkTitle("FUTURE_RULE")).toBe("FUTURE_RULE");
     expect(fieldStatusLabel("WEIRD")).toBe("WEIRD");
+  });
+});
+
+/* ------------------------- P4.5: approval + export ------------------------ */
+
+describe("canApprove / canExport (derived from the machine's own table)", () => {
+  it("APPROVE exists only from READY_FOR_APPROVAL, and only for a MANAGER", () => {
+    expect(canApprove("READY_FOR_APPROVAL", "MANAGER")).toBe(true);
+    expect(canApprove("READY_FOR_APPROVAL", "EXECUTIVE")).toBe(false); // row 14: 403
+    expect(canApprove("NEEDS_REVIEW", "MANAGER")).toBe(false); // machine: NOT_READY_FOR_APPROVAL
+    expect(canApprove("APPROVED", "MANAGER")).toBe(false);
+    expect(canApprove("EXPORTED", "MANAGER")).toBe(false);
+    expect(canApprove("DRAFT", "MANAGER")).toBe(false);
+  });
+
+  it("EXPORT exists only from APPROVED — and deliberately takes NO role (row 16 contract)", () => {
+    expect(canExport("APPROVED")).toBe(true);
+    expect(canExport("READY_FOR_APPROVAL")).toBe(false); // machine: PREMATURE_EXPORT
+    expect(canExport("EXPORTED")).toBe(false); // terminal — no re-export
+    expect(canExport("NEEDS_REVIEW")).toBe(false);
+    expect(canExport("DRAFT")).toBe(false);
+  });
+});
+
+describe("approvalReadiness (human summary over the aggregate + engine seam)", () => {
+  const base = {
+    documents: [{ type: "INVOICE" }, { type: "PACKING_LIST" }, { type: "BILL_OF_LADING" }],
+    fields: [] as Array<{ documentType: string; fieldKey: string; status: string }>,
+    checks: [] as Array<{ ruleKey: string; result: string; severity: string; resolvedAt: string | null }>,
+  };
+
+  it("counts every required key of a missing document as outstanding, and names the doc", () => {
+    const r = approvalReadiness({ ...base, documents: [{ type: "INVOICE" }] });
+    expect(r.missingDocs).toEqual(["PACKING_LIST", "BILL_OF_LADING"]);
+    // INVOICE rows absent too (7 keys) + PACKING_LIST 2 + BOL 5 — all outstanding
+    expect(r.outstanding).toHaveLength(14);
+    expect(r.outstanding.filter((o) => o.docType === "PACKING_LIST").map((o) => o.fieldKey)).toEqual([
+      "packagesCount",
+      "grossWeightKg",
+    ]);
+  });
+
+  it("an AI_DRAFT row is outstanding; CONFIRMED/CORRECTED/MANUAL_ENTERED are cleared", () => {
+    const r = approvalReadiness({
+      ...base,
+      fields: [
+        { documentType: "PACKING_LIST", fieldKey: "packagesCount", status: "AI_DRAFT" },
+        { documentType: "PACKING_LIST", fieldKey: "grossWeightKg", status: "MANUAL_ENTERED" },
+      ],
+    });
+    // PACKING_LIST: AI_DRAFT outstanding, MANUAL_ENTERED cleared; the other two
+    // documents have no rows at all → their keys are outstanding too.
+    expect(r.outstanding.filter((o) => o.docType === "PACKING_LIST")).toEqual([{ docType: "PACKING_LIST", fieldKey: "packagesCount" }]);
+    expect(r.outstanding).toHaveLength(13);
+  });
+
+  it("blocking list mirrors the gate's criteria (FAIL + BLOCKING + unresolved); corrections/resolutions counted", () => {
+    const r = approvalReadiness({
+      ...base,
+      fields: [{ documentType: "INVOICE", fieldKey: "totalValue", status: "CORRECTED" }],
+      checks: [
+        { ruleKey: "GROSS_WEIGHT_CONSISTENCY", result: "FAIL", severity: "BLOCKING", resolvedAt: null },
+        { ruleKey: "INVOICE_TOTAL", result: "FAIL", severity: "BLOCKING", resolvedAt: "2026-11-06T10:00:00.000Z" }, // accepted with note
+        { ruleKey: "LINE_ARITHMETIC", result: "WARNING", severity: "WARNING", resolvedAt: null }, // not blocking
+        { ruleKey: "CURRENCY_CONSISTENCY", result: "PASS", severity: "BLOCKING", resolvedAt: null },
+      ],
+    });
+    expect(r.blocking).toEqual(["GROSS_WEIGHT_CONSISTENCY"]);
+    expect(r.corrections).toBe(1);
+    expect(r.resolutions).toBe(1);
+  });
+});
+
+describe("auditSummary (renders ONLY real payload keys — all 13 actions verified)", () => {
+  it("FIELD_CORRECTED → label + from → to; FIELD_CONFIRMED → label", () => {
+    expect(
+      auditSummary("FIELD_CORRECTED", { fieldKey: "totalValue", fieldId: "f1", from: "5100", to: "5000.00" }),
+    ).toBe("Total value: 5100 → 5000.00");
+    expect(auditSummary("FIELD_CONFIRMED", { fieldKey: "invoiceNumber", fieldId: "f1" })).toBe("Invoice number");
+  });
+
+  it("DISCREPANCY_RESOLVED → check title + note VERBATIM", () => {
+    expect(
+      auditSummary("DISCREPANCY_RESOLVED", {
+        ruleKey: "GROSS_WEIGHT_CONSISTENCY",
+        note: "Supplier scale certificate matches the packing list; the invoice weight is stale.",
+      }),
+    ).toBe('Gross weights across documents — “Supplier scale certificate matches the packing list; the invoice weight is stale.”');
+  });
+
+  it("CHECKS_RECOMPUTED → blockingFails + fieldsCleared (+ results length), never the payload dump", () => {
+    expect(auditSummary("CHECKS_RECOMPUTED", { blockingFails: 2, fieldsCleared: true, results: [{}, {}, {}, {}, {}, {}, {}, {}, {}] })).toBe(
+      "blockingFails: 2 · fieldsCleared: true · 9 checks",
+    );
+    expect(auditSummary("CHECKS_RECOMPUTED", { blockingFails: 0, fieldsCleared: true })).toBe("blockingFails: 0 · fieldsCleared: true");
+  });
+
+  it("EXPORT_GENERATED → file + truncated sha + bytes; EXPORT_DOWNLOADED → file; APPROVAL_GRANTED → ref", () => {
+    const sha = "3b1f" + "a".repeat(60);
+    expect(auditSummary("EXPORT_GENERATED", { exportId: "e1", fileName: "SHP-1-cargolens-csv-v1.csv", csvSha256: sha, bytes: 1234 })).toBe(
+      "SHP-1-cargolens-csv-v1.csv · sha 3b1faaaaaaaa… · 1.2 KB",
+    );
+    expect(auditSummary("EXPORT_DOWNLOADED", { exportId: "e1", fileName: "SHP-1-cargolens-csv-v1.csv" })).toBe("SHP-1-cargolens-csv-v1.csv");
+    expect(auditSummary("APPROVAL_GRANTED", { ref: "SHP-202611-03" })).toBe("SHP-202611-03");
+  });
+
+  it("APPROVAL_REVOKED renders the machine's raw reason — no interpretation", () => {
+    expect(auditSummary("APPROVAL_REVOKED", { reason: "HUMAN_WRITE" })).toBe("reason: HUMAN_WRITE");
+    expect(auditSummary("APPROVAL_REVOKED", { reason: "MANUAL" })).toBe("reason: MANUAL");
+  });
+
+  it("upload/entry/lifecycle events render from their real keys only", () => {
+    expect(auditSummary("SHIPMENT_CREATED", { ref: "SHP-1", source: "MANUAL", supplierId: "s1" })).toBe("SHP-1 · via MANUAL");
+    expect(auditSummary("DOCUMENT_UPLOADED", { documentId: "d1", type: "INVOICE", sha256Hex: "abcd" + "0".repeat(60), sizeBytes: 44 })).toContain(
+      "Invoice · 44 B · sha abcd00000000",
+    );
+    expect(auditSummary("EXTRACTION_STARTED", { via: "MANUAL_ENTRY", documentId: "d1" })).toBe("via MANUAL_ENTRY");
+    expect(auditSummary("DOCS_REACHED_TERMINAL", { via: "MANUAL_ENTRY", documents: 3 })).toBe("via MANUAL_ENTRY · 3 documents");
+    expect(auditSummary("MANUAL_ENTRY", { documentId: "d1", fieldKeys: ["a", "b", "c"], lineItems: 1, docStatus: "PROCESSED" })).toBe(
+      "PROCESSED · 3 fields · 1 line item",
+    );
+  });
+
+  it("unknown actions + degenerate payloads degrade honestly", () => {
+    expect(auditSummary("FUTURE_EVENT", { alpha: 1, nested: { a: 1 } })).toBe("alpha: 1");
+    expect(auditSummary("FIELD_CORRECTED", null)).toBeNull();
+    expect(auditSummary("FIELD_CORRECTED", "junk")).toBeNull();
+    expect(auditSummary("FIELD_CORRECTED", { fieldKey: "unknownKey", from: "1", to: "2" })).toBe("unknownKey: 1 → 2");
   });
 });

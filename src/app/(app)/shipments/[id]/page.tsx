@@ -1,30 +1,39 @@
 /**
- * THE REVIEW SCREEN (PRD screen 4, plan P4.4): where a documentation
+ * THE REVIEW SCREEN (PRD screen 4, plan P4.4 + P4.5): where a documentation
  * executive inspects extracted data against the document itself, corrects
  * fields, completes missing data manually (D-1b), and reads the
- * deterministic cross-checks that gate approval.
+ * deterministic cross-checks that gate approval; where the MANAGER approves
+ * and generates the gated CSV export; and where the append-only audit trail
+ * renders every event the services wrote.
  *
  * Everything is the EXISTING contract: row-6 detail aggregate (fields,
- * lineItems, checks, approval all included), row-11 signed-file chain for the
- * preview, row-12 field PATCH, row-10 manual entry, row-13 resolve, row-18
- * audit. The client invents NO values, NO confidence, NO checks.
+ * lineItems, checks, approval, latestExport all included), row-11 signed-file
+ * chain for the preview, row-12 field PATCH, row-10 manual entry, row-13
+ * resolve, row-14 approve, row-16 export, row-17 re-download, row-18 audit.
+ * The client invents NO values, NO confidence, NO checks, NO eligibility.
  *
- * Interaction context comes from a PURE permissions helper derived from the
- * state machine's own table — the UI cannot offer a write the machine would
- * 409 (DRAFT/PROCESSING corrections, EXPORTED anything).
+ * Interaction context comes from PURE permission helpers derived from the
+ * state machine's own table — the UI cannot offer an action the machine would
+ * 409/403 (DRAFT/PROCESSING corrections, EXPORTED anything, executive
+ * approval, unapproved export).
  */
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { apiFetch } from "@/server/api-fetch";
+import { getSessionUserRsc } from "@/server/session";
 import { StatusChip } from "@/components/status-chip";
 import { DocumentUpload, type ExistingDoc } from "@/components/document-upload";
 import { DocumentPreview } from "@/components/document-preview";
 import { FieldsPanel } from "@/components/fields-panel";
 import { ManualEntryForm } from "@/components/manual-entry-form";
 import { ResolveCheckButton } from "@/components/resolve-check-button";
+import { ApprovalPanel } from "@/components/approval-panel";
+import { ExportPanel } from "@/components/export-panel";
 import { ErrorBanner } from "@/components/states";
 import { documentStatusLabel, documentTypeLabel, formatBytes } from "@/lib/format";
 import {
+  approvalReadiness,
+  auditSummary,
   checkDetailRows,
   checkStatusLabel,
   checkTitle,
@@ -116,16 +125,6 @@ const fmt = new Intl.DateTimeFormat("en-GB", {
 const money = new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const qtyFmt = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 3 });
 
-function scalarSummary(payload: unknown): string | null {
-  if (payload === null || typeof payload !== "object") return null;
-  return (
-    Object.entries(payload)
-      .filter(([, v]) => ["string", "number", "boolean"].includes(typeof v))
-      .map(([k, v]) => `${k}: ${v}`)
-      .join(" · ") || null
-  );
-}
-
 export default async function ReviewPage({
   params,
   searchParams,
@@ -133,8 +132,9 @@ export default async function ReviewPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ doc?: string }>;
 }) {
-  const [{ id }, { doc: docParam }] = await Promise.all([params, searchParams]);
-  const selectedDoc: DocType = DOC_TYPES.includes(docParam as DocType) ? (docParam as DocType) : "INVOICE";
+  const [{ id }, { doc: docParam }, user] = await Promise.all([params, searchParams, getSessionUserRsc()]);
+  const auditTab = docParam === "AUDIT"; // 4th tab: the full audit trail, full-width
+  const selectedDoc: DocType = !auditTab && DOC_TYPES.includes(docParam as DocType) ? (docParam as DocType) : "INVOICE";
 
   const result = await apiFetch<DetailResponse>(`/api/shipments/${id}`);
   if (!result.ok) {
@@ -156,6 +156,21 @@ export default async function ReviewPage({
 
   const perms = reviewPermissions(s.status);
   const exported = s.status === "EXPORTED";
+  // Viewer context for the manager-only approve button. The layout guarantees
+  // a session; defaulting to EXECUTIVE is the conservative direction (the
+  // button would hide, never wrongly appear).
+  const role = user?.role ?? "EXECUTIVE";
+  // Approval readiness summary — PURE helper over the aggregate + the engine's
+  // own required-field seam. Display only; the server's gates are the law.
+  const readiness = approvalReadiness({
+    documents: documents.map((d) => ({ type: d.type })),
+    fields: fields.map((f) => ({
+      documentType: String(f.documentType),
+      fieldKey: String(f.fieldKey),
+      status: String(f.status),
+    })),
+    checks: checks.map((c) => ({ ruleKey: c.ruleKey, result: c.result, severity: c.severity, resolvedAt: c.resolvedAt })),
+  });
   // Display currency for money checks: the invoice's own `currency` FIELD is
   // the declared unit; fall back to the totalValue row's currency column
   // (manual entry may not have set either — then values render un-currencied).
@@ -239,12 +254,24 @@ export default async function ReviewPage({
         </div>
       ) : null}
 
+      {/* ---------------- approval + export (P4.5) ---------------- */}
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
+        <ApprovalPanel
+          shipmentId={s.id}
+          status={s.status}
+          role={role}
+          approval={s.approval?.approvedAt ? { approvedByName: s.approval.approvedByName, approvedAt: s.approval.approvedAt } : null}
+          readiness={readiness}
+        />
+        <ExportPanel shipmentId={s.id} status={s.status} latestExport={latestExport} />
+      </div>
+
       {/* ---------------- document tabs ---------------- */}
       <div className="border-b border-zinc-200">
         <nav className="flex gap-1" aria-label="Documents">
-          {DOC_TYPES.map((t) => {
-            const d = documents.find((x) => x.type === t);
-            const active = t === selectedDoc;
+          {[...DOC_TYPES, "AUDIT" as const].map((t) => {
+            const d = t === "AUDIT" ? undefined : documents.find((x) => x.type === t);
+            const active = t === "AUDIT" ? auditTab : !auditTab && t === selectedDoc;
             return (
               <Link
                 key={t}
@@ -254,20 +281,63 @@ export default async function ReviewPage({
                   active ? "border-zinc-900 text-zinc-900" : "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-700"
                 }`}
               >
-                {documentTypeLabel(t)}
-                <span
-                  className={`ml-2 inline-block h-1.5 w-1.5 rounded-full align-middle ${
-                    !d ? "bg-zinc-300" : d.status === "PROCESSED" ? "bg-emerald-500" : d.status === "UPLOADED" ? "bg-amber-500" : "bg-red-500"
-                  }`}
-                  aria-hidden
-                />
+                {t === "AUDIT" ? "Audit trail" : documentTypeLabel(t)}
+                {t === "AUDIT" ? null : (
+                  <span
+                    className={`ml-2 inline-block h-1.5 w-1.5 rounded-full align-middle ${
+                      !d ? "bg-zinc-300" : d.status === "PROCESSED" ? "bg-emerald-500" : d.status === "UPLOADED" ? "bg-amber-500" : "bg-red-500"
+                    }`}
+                    aria-hidden
+                  />
+                )}
               </Link>
             );
           })}
         </nav>
       </div>
 
-      {(() => {
+      {auditTab ? (
+        /* ---------------- audit trail (full-width, P4.5) ---------------- */
+        <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
+          <div className="border-b border-zinc-200 px-4 py-3">
+            <h2 className="text-sm font-semibold text-zinc-900">Append-only audit trail</h2>
+            <p className="mt-0.5 text-xs text-zinc-500">
+              Every event the services wrote — verbatim payloads, newest first. This tab renders history; it never
+              fabricates a description. POST to this endpoint is not a route (405): entries cannot be edited or added
+              from outside a business transaction.
+            </p>
+          </div>
+          {events === null ? (
+            <p className="px-4 py-3 text-xs text-zinc-500">Audit trail is unavailable right now.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-zinc-200 text-xs font-medium text-zinc-500">
+                    <th className="px-4 py-2.5">When (IST)</th>
+                    <th className="px-4 py-2.5">Actor</th>
+                    <th className="px-4 py-2.5">Event</th>
+                    <th className="px-4 py-2.5">Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {events.map((e) => (
+                    <tr key={e.id} className="border-b border-zinc-100 last:border-0 align-top">
+                      <td className="whitespace-nowrap px-4 py-2 font-mono text-[11px] text-zinc-400">
+                        {fmt.format(new Date(e.createdAt))} IST
+                      </td>
+                      <td className="px-4 py-2 font-medium text-zinc-900">{e.actorName}</td>
+                      <td className="px-4 py-2 text-zinc-700">{AUDIT_LABELS[e.action] ?? e.action}</td>
+                      <td className="px-4 py-2 font-mono text-[11px] text-zinc-500">{auditSummary(e.action, e.payload) ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      ) : (
+        (() => {
         const doc = documents.find((x) => x.type === selectedDoc);
         const rows = fieldRows(selectedDoc);
         const items = lineItems.filter((li) => li.documentType === selectedDoc);
@@ -339,7 +409,8 @@ export default async function ReviewPage({
             </div>
           </div>
         );
-      })()}
+        })()
+      )}
 
       {/* ---------------- documents / upload ---------------- */}
       {perms.readOnly ? null : <DocumentUpload shipmentId={s.id} documents={documents} />}
@@ -435,27 +506,7 @@ export default async function ReviewPage({
         </ul>
       </div>
 
-      {/* ---------------- history ---------------- */}
-      <div className="rounded-lg border border-zinc-200 bg-white">
-        <div className="border-b border-zinc-200 px-4 py-3">
-          <h2 className="text-sm font-semibold text-zinc-900">History</h2>
-          <p className="mt-0.5 text-xs text-zinc-500">Append-only audit trail, newest first.</p>
-        </div>
-        {events === null ? (
-          <p className="px-4 py-3 text-xs text-zinc-500">History is unavailable right now.</p>
-        ) : (
-          <ul className="divide-y divide-zinc-100">
-            {events.slice(0, 30).map((e) => (
-              <li key={e.id} className="flex flex-wrap items-baseline gap-x-3 px-4 py-2 text-sm">
-                <span className="w-32 shrink-0 font-mono text-[11px] text-zinc-400">{fmt.format(new Date(e.createdAt))} IST</span>
-                <span className="w-44 shrink-0 font-medium text-zinc-900">{AUDIT_LABELS[e.action] ?? e.action}</span>
-                <span className="text-zinc-500">{e.actorName}</span>
-                <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-400">{scalarSummary(e.payload) ?? ""}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      {/* ---------------- (history moved into the AUDIT tab, P4.5) ---------------- */}
     </div>
   );
 }
