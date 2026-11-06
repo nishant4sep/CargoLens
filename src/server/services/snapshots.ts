@@ -79,7 +79,12 @@ export async function loadSnapshots(db: Db, shipmentId: string): Promise<Record<
       description: li.description,
       hsnCode: li.hsnCode ?? undefined,
       unit: li.unit ?? undefined,
-      quantity: li.quantity.toNumber(),
+      // Engine unit is MILLI for line-item quantity (mulMilli: price×qty/1000;
+      // buildSnapshots feeds qtyMilli) — the DB column is REAL units, so ×1000.
+      // Serving real units here made LINE_ARITHMETIC false-WARN on perfect data
+      // (found by the P4.4 review-workflow suite; the seed never recomputed
+      // from DB rows, so the two paths never met before).
+      quantity: Math.round(li.quantity.toNumber() * 1000),
       unitPrice: li.unitPrice === null ? null : { minor: Math.round(li.unitPrice.toNumber() * 1000), currency: null },
       lineTotal: li.lineTotal === null ? null : { minor: Math.round(li.lineTotal.toNumber() * 1000), currency: null },
     }));

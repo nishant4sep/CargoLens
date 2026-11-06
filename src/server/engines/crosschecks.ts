@@ -72,6 +72,16 @@ const REQUIRED: Array<{ doc: DocType; keys: FieldKey[]; plusLines?: true }> = [
   { doc: "BILL_OF_LADING", keys: ["containerNumber", "packagesCount", "grossWeightKg", "portOfLoading", "portOfDischarge"] },
 ];
 
+/** Review-UI seam (P4.4): the SAME required-field policy the engine enforces,
+ *  exposed so the manual-entry form can mark required inputs — the UI never
+ *  maintains a second, drift-prone copy of this list. */
+export const REQUIRED_FIELD_KEYS: Record<DocType, readonly FieldKey[]> = Object.fromEntries(
+  REQUIRED.map((r) => [r.doc, r.keys]),
+) as unknown as Record<DocType, readonly FieldKey[]>; // fromEntries loses the keyed tuple type — values are exact
+
+/** Documents whose required-fields rule also demands ≥1 line item. */
+export const DOC_TYPES_REQUIRING_LINES: readonly DocType[] = REQUIRED.filter((r) => r.plusLines).map((r) => r.doc);
+
 export function checkRequiredFields(snaps: SnapshotSet): CrossCheckResult {
   const failed: FieldRef[] = [];
   const missing: string[] = [];
