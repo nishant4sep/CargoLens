@@ -12,6 +12,7 @@ import {
   checkDetailRows,
   checkTitle,
   confidencePercent,
+  extractAction,
   fieldLabel,
   fieldStatusLabel,
   formatFieldValue,
@@ -361,5 +362,28 @@ describe("auditSummary (renders ONLY real payload keys — all 13 actions verifi
     expect(auditSummary("FIELD_CORRECTED", null)).toBeNull();
     expect(auditSummary("FIELD_CORRECTED", "junk")).toBeNull();
     expect(auditSummary("FIELD_CORRECTED", { fieldKey: "unknownKey", from: "1", to: "2" })).toBe("unknownKey: 1 → 2");
+  });
+});
+
+describe("extractAction (Phase 5 button eligibility, derived from row-9 + machine rules)", () => {
+  it("UPLOADED and FAILED documents extract; FAILED is retryable by design", () => {
+    expect(extractAction("DRAFT", "UPLOADED")).toBe("extract");
+    expect(extractAction("PROCESSING", "UPLOADED")).toBe("extract");
+    expect(extractAction("NEEDS_REVIEW", "FAILED")).toBe("extract");
+  });
+
+  it("PROCESSED and UNREADABLE offer RE-extraction (the AI layer is replaceable)", () => {
+    expect(extractAction("NEEDS_REVIEW", "PROCESSED")).toBe("re-extract");
+    expect(extractAction("READY_FOR_APPROVAL", "UNREADABLE")).toBe("re-extract");
+  });
+
+  it("a PROCESSING document hides the action - a run is in flight and the service 409s", () => {
+    expect(extractAction("PROCESSING", "PROCESSING")).toBeNull();
+  });
+
+  it("APPROVED and EXPORTED hide the action (no side-effect revocation, no terminal writes)", () => {
+    expect(extractAction("APPROVED", "UPLOADED")).toBeNull();
+    expect(extractAction("EXPORTED", "UPLOADED")).toBeNull();
+    expect(extractAction("EXPORTED", "PROCESSED")).toBeNull();
   });
 });

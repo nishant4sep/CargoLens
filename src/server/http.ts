@@ -24,6 +24,7 @@ export type ApiErrorCode =
   | "NOT_FOUND"
   | "CONFLICT"
   | "UNPROCESSABLE"
+  | "PROVIDER_UNAVAILABLE"
   | "RATE_LIMITED"
   | "INTERNAL";
 
@@ -34,6 +35,7 @@ const STATUS: Record<ApiErrorCode, number> = {
   NOT_FOUND: 404,
   CONFLICT: 409,
   UNPROCESSABLE: 422,
+  PROVIDER_UNAVAILABLE: 503,
   RATE_LIMITED: 429,
   INTERNAL: 500,
 };

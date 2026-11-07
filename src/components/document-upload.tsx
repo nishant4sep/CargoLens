@@ -32,6 +32,7 @@ export interface ExistingDoc {
   sizeBytes: string;
   pageCount: number | null;
   extractedAt: string | null;
+  extractError?: string | null; // WHY extraction failed (Phase 5) — absent in pre-Phase-5 payloads
 }
 
 const MAX_BYTES = 10 * 1024 * 1024; // mirrors the route's contract (413 beyond)

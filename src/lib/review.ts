@@ -218,6 +218,30 @@ export function reviewPermissions(status: string): ReviewPermissions {
   }
 }
 
+/* ---------------------- AI extraction action (Phase 5) --------------------- */
+
+/** What the per-document "Extract with AI" action offers, derived STRICTLY
+ *  from the row-9 service + the machine's own EXTRACTION_STARTED edges:
+ *  UPLOADED/FAILED → extract (FAILED is retryable by design); PROCESSED/
+ *  UNREADABLE → re-extract (the AI layer is replaceable, human rows are not);
+ *  a PROCESSING document is a run in flight (the service 409s). Hidden on
+ *  APPROVED/EXPORTED — re-extraction there would revoke/409, and revoking an
+ *  approval is the approval panel's explicit job, not a side effect. The
+ *  server remains the law; this only keeps impossible buttons off the screen. */
+export function extractAction(shipmentStatus: string, docStatus: string): "extract" | "re-extract" | null {
+  if (shipmentStatus === "APPROVED" || shipmentStatus === "EXPORTED") return null;
+  switch (docStatus) {
+    case "UPLOADED":
+    case "FAILED":
+      return "extract";
+    case "PROCESSED":
+    case "UNREADABLE":
+      return "re-extract";
+    default:
+      return null; // document PROCESSING — a run is already in flight
+  }
+}
+
 /* --------------------------- check display rows --------------------------- */
 
 export interface CheckRow {

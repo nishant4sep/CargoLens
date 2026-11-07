@@ -30,7 +30,7 @@ function checkPayload(r: CrossCheckResult): Prisma.InputJsonValue {
  * INVARIANTS_RECOMPUTED with the true unresolved-blocking count AND whether
  * every field is human-cleared (READY_FOR_APPROVAL needs both).
  */
-async function recomputeInTx(
+export async function recomputeInTx(
   tx: Tx,
   shipment: { id: string; ref: string; status: ShipmentStatus },
   actor: AuthUser,

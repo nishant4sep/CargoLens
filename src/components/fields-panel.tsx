@@ -172,7 +172,20 @@ export function FieldsPanel({
                 </div>
               ) : (
                 <>
-                  <p className="min-w-0 flex-1 font-mono text-[13px] text-zinc-900">{formatFieldValue(f)}</p>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-mono text-[13px] text-zinc-900">{formatFieldValue(f)}</p>
+                    {f.sourceExcerpt ? (
+                      <p
+                        className="mt-0.5 truncate text-[11px] text-zinc-400"
+                        title={`Verbatim page text the model read this from — page ${f.sourcePage ?? "?"}`}
+                      >
+                        <span aria-hidden>“</span>
+                        {f.sourceExcerpt}
+                        <span aria-hidden>”</span>
+                        {f.sourcePage !== null ? <span className="ml-1 text-zinc-300">· p.{f.sourcePage}</span> : null}
+                      </p>
+                    ) : null}
+                  </div>
                   <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                     {conf ? (
                       <span

@@ -24,6 +24,7 @@ import { getSessionUserRsc } from "@/server/session";
 import { StatusChip } from "@/components/status-chip";
 import { DocumentUpload, type ExistingDoc } from "@/components/document-upload";
 import { DocumentPreview } from "@/components/document-preview";
+import { ExtractButton } from "@/components/extract-button";
 import { FieldsPanel } from "@/components/fields-panel";
 import { ManualEntryForm } from "@/components/manual-entry-form";
 import { ResolveCheckButton } from "@/components/resolve-check-button";
@@ -37,6 +38,7 @@ import {
   checkDetailRows,
   checkStatusLabel,
   checkTitle,
+  extractAction,
   reviewPermissions,
   toReviewField,
   type ReviewField,
@@ -234,12 +236,13 @@ export default async function ReviewPage({
         ) : null}
         {s.status === "PROCESSING" ? (
           <p className="mt-3 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700">
-            Extraction in progress — manual entry feeds it; field corrections unlock once all documents are processed.
+            Extraction in progress — extract or manually enter the remaining documents; field corrections unlock once
+            all documents are processed.
           </p>
         ) : null}
         {s.status === "DRAFT" ? (
           <p className="mt-3 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700">
-            Draft — the first manual entry starts processing (no AI extraction has run yet).
+            Draft — extract each document with AI (or enter it manually); the first extraction starts processing.
           </p>
         ) : null}
       </div>
@@ -341,6 +344,7 @@ export default async function ReviewPage({
         const doc = documents.find((x) => x.type === selectedDoc);
         const rows = fieldRows(selectedDoc);
         const items = lineItems.filter((li) => li.documentType === selectedDoc);
+        const extract = doc ? extractAction(s.status, doc.status) : null;
         return (
           <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
             <div className="space-y-4">
@@ -361,6 +365,14 @@ export default async function ReviewPage({
             </div>
 
             <div className="space-y-4">
+              {doc && extract ? <ExtractButton documentId={doc.id} action={extract} /> : null}
+              {doc?.status === "FAILED" && doc.extractError ? (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+                  <p className="text-sm font-medium text-red-800">The last extraction attempt failed</p>
+                  <p className="mt-1 break-words font-mono text-[11px] text-red-700">{doc.extractError}</p>
+                  <p className="mt-1 text-xs text-red-600">Retry above, or enter this document manually below.</p>
+                </div>
+              ) : null}
               <FieldsPanel shipmentId={s.id} fields={rows} requiredKeys={REQUIRED_FIELD_KEYS[selectedDoc]} canCorrect={perms.canCorrect} />
 
               {items.length > 0 ? (

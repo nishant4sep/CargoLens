@@ -144,6 +144,7 @@ export async function getShipmentDetail(id: string) {
     sizeBytes: d.sizeBytes.toString(),
     pageCount: d.pageCount,
     extractedAt: d.extractedAt,
+    extractError: d.extractError, // WHY a FAILED document failed — the review UI renders it verbatim
   }));
 
   return {
