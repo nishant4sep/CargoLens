@@ -90,7 +90,15 @@ export default async function DashboardPage({
           <h1 className="text-lg font-semibold tracking-tight text-zinc-900">Shipments</h1>
           <p className="text-sm text-zinc-500">{total} total</p>
         </div>
-        <NewShipmentButton />
+        <div className="flex items-center gap-2">
+          <Link
+            href="/reports/accuracy"
+            className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+          >
+            Accuracy report
+          </Link>
+          <NewShipmentButton />
+        </div>
       </div>
 
       {/* Status filter chips + ref search (GET form — no client JS needed) */}
