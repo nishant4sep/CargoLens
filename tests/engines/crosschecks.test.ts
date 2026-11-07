@@ -257,6 +257,37 @@ describe("missing / unreadable documents", () => {
   });
 });
 
+describe("packages across all three documents (brief requirement)", () => {
+  it("CV-5: agrees when invoice, packing list and BOL all match", () => {
+    const docs = {
+      INVOICE: {
+        ...cleanDocs.INVOICE,
+        fields: { ...cleanDocs.INVOICE.fields, packagesCount: { kind: "COUNT" as const, value: 40 } },
+      },
+      PACKING_LIST: cleanDocs.PACKING_LIST,
+      BILL_OF_LADING: cleanDocs.BILL_OF_LADING,
+    };
+    const r = runChecks(docs).find((x) => x.ruleKey === "PACKAGES_MATCH")!;
+    expect(r.status).toBe("PASS");
+    expect(r.message).toMatch(/3 document/);
+  });
+
+  it("CV-5: FAILs when invoice disagrees with packing list and BOL (cites disagreeing docs)", () => {
+    const docs = {
+      INVOICE: {
+        ...cleanDocs.INVOICE,
+        fields: { ...cleanDocs.INVOICE.fields, packagesCount: { kind: "COUNT" as const, value: 38 } },
+      },
+      PACKING_LIST: cleanDocs.PACKING_LIST, // 40
+      BILL_OF_LADING: cleanDocs.BILL_OF_LADING, // 40
+    };
+    const r = runChecks(docs).find((x) => x.ruleKey === "PACKAGES_MATCH")!;
+    expect(r.status).toBe("FAIL");
+    expect(r.severity).toBe("BLOCKING");
+    expect(r.failedRefs.some((f) => f.docType === "INVOICE")).toBe(true);
+  });
+});
+
 describe("container/currency rules", () => {
   it("CV-7: PL/BOL mismatch FAILs and cites both docs", () => {
     const docs = companyB(3120000, 3120000, 3120000, "MSLU7654321");

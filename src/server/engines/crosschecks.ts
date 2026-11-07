@@ -230,22 +230,36 @@ function fmtQty(milli: number): string {
 /* ------------------------------ CV-5 -------------------------------------- */
 
 export function checkPackagesMatch(snaps: SnapshotSet, tol: Tolerances = DEFAULT_TOLERANCES): CrossCheckResult {
-  const a = countOf(snaps.PACKING_LIST?.fields.packagesCount);
-  const b = countOf(snaps.BILL_OF_LADING?.fields.packagesCount);
-  if (a == null || b == null) {
-    return { ruleKey: "PACKAGES_MATCH", status: "SKIPPED", severity: "BLOCKING", message: "Needs package counts from packing list + BOL.", failedRefs: [] };
+  // Compare package counts across all three documents where the value exists
+  // (the brief requires packages across all three). At least two present needed.
+  const present = ALL_DOC_TYPES.map((t) => ({ docType: t, n: countOf(snaps[t]?.fields.packagesCount) }))
+    .filter((w): w is { docType: DocType; n: number } => w.n != null);
+  if (present.length < 2) {
+    return { ruleKey: "PACKAGES_MATCH", status: "SKIPPED", severity: "BLOCKING", message: "Needs package counts from at least 2 documents (invoice/packing list/BOL).", failedRefs: [] };
   }
-  const ok = Math.abs(a - b) <= tol.packageCount.passUnits;
+  const nums = present.map((w) => w.n);
+  const diff = Math.max(...nums) - Math.min(...nums);
+  const ok = diff <= tol.packageCount.passUnits;
+  const failedRefs: FieldRef[] = [];
+  if (!ok) {
+    for (const w of present) {
+      if (w.n === Math.max(...nums) || w.n === Math.min(...nums)) {
+        if (!failedRefs.some((f) => f.docType === w.docType)) {
+          failedRefs.push({ docType: w.docType, fieldKey: "packagesCount" });
+        }
+      }
+    }
+  }
+  const summary = present.map((w) => `${w.docType} ${w.n}`).join(", ");
   return {
     ruleKey: "PACKAGES_MATCH",
     status: ok ? "PASS" : "FAIL",
     severity: "BLOCKING",
-    message: ok ? `Package counts agree (${a}).` : `Package count mismatch: packing list ${a} vs BOL ${b}.`,
-    failedRefs: ok ? [] : [
-      { docType: "PACKING_LIST", fieldKey: "packagesCount" },
-      { docType: "BILL_OF_LADING", fieldKey: "packagesCount" },
-    ],
-    details: { packingList: a, bol: b, diff: Math.abs(a - b) },
+    message: ok
+      ? `Package counts agree across ${present.length} document(s) (${nums[0]}).`
+      : `Package count mismatch across documents: ${summary} (Δ ${diff}).`,
+    failedRefs,
+    details: { documents: present, diff },
   };
 }
 

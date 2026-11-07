@@ -16,7 +16,7 @@
 
 ## 2) Suites & coverage
 
-### 2.1 Pure (14 files, 180 tests) — `npm run test`
+### 2.1 Pure (14 files, 182 tests) — `npm run test`
 
 - `tests/engines/crosschecks.test.ts` — the 9 deterministic rules (CV-1..CV-8 family), tolerances, effective-documents gating, FAIL cites accusing fields; planted SHP-24811 45 kg discrepancy fails `GROSS_WEIGHT_CONSISTENCY`, clean case passes.
 - `tests/engines/numeric.test.ts`, `tests/engines/normalize.test.ts` — milli/BigInt arithmetic, money/weight/date/Incoterm parsing; **never-guess** (unknown units / prose refused).
@@ -40,6 +40,7 @@ Runs sequentially (`fileParallelism:false`) against real local Postgres with syn
 - `tests/integration/approval-export.test.ts` — manager-only approve, READY gate, gated deterministic export, re-download, terminal/blocked cases.
 - `tests/integration/accuracy-report.test.ts` — report endpoints/aggregations over synthetic data.
 - `tests/integration/extract.test.ts` (**14, Phase 5**) — the real row-9 pipeline (stub-labeled): **401/404/409** (in-flight + EXPORTED)/**503** (no provider, and **nothing changes** — no claim/audit/status); happy ladder with **ground-truth milli assertions** (e.g. `totalValue` 7650 EUR, `invoiceDate` 2024-03-14, line 180×42.5=7650 — read from the page, **no arithmetic**; `AI_DRAFT`, `confirmedById=null`, confidence/excerpt/page present; absent keys not invented); provider **self-identifies** in audits; partial completion (no `DOCS_REACHED_TERMINAL`); last-doc ladder → `NEEDS_REVIEW` (AI drafts cannot approve) → human confirm → `READY_FOR_APPROVAL`; re-extract re-opens and **replaces the AI layer wholesale** while **CONFIRMED rows are skipped** (stale AI_DRAFT purged, not duplicated); **provider failure = handled outcome** (doc `FAILED` + `EXTRACTION_FAILED` audited + `extractError`, 200, retryable, **never a 500/zombie**) then retry succeeds; **15-min PROCESSING zombie** re-runnable; whole-doc `UNREADABLE` is terminal for the doc but **manual entry completes the workflow**; AI+manual mix → engine grades AI values (**CV-6 `GROSS_WEIGHT_CONSISTENCY` blocks**, approve 409); **human CORRECTED value survives re-extraction byte-identically** (skipped; sibling re-drafted); no regression to READY→APPROVED→export and EXPORTED refuses extraction (409).
+- Test-isolation hardening (this audit): `api.test.ts` precondition lookups made self-contained (create their own DRAFT / no-export shipment) and `seed-idempotency` global counts made resilient to non-destructive stray rows in a shared dev DB, so `npm run test:seed` remains reliable without weakening invariants.
 
 ## 3) Executed results (this repo state)
 
@@ -47,7 +48,7 @@ Runs sequentially (`fileParallelism:false`) against real local Postgres with syn
 |---|---|---|
 | Typecheck | `npm run typecheck` | **clean** (`tsc --noEmit`) |
 | Production build | `npm run build` | **clean** (Next 16.4.5 Turbopack; route tree generated) |
-| Pure tests | `npm run test` | **14 files / 180 tests — all pass** |
+| Pure tests | `npm run test` | **14 files / 182 tests — all pass** |
 | Integration tests | `npm run test:seed` | **10 files / 128 tests — all pass** (Docker `cargolens-db` healthy) |
 
 > Reproduce: `docker compose up -d` → `npx prisma migrate deploy` → `npm run test` and (with DB healthy) `npm run test:seed` → `npm run build`.

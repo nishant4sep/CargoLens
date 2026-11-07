@@ -90,7 +90,7 @@ npm run typecheck   # tsc --noEmit
 npm run build       # production build
 ```
 
-Current status (verified in this repo state): **typecheck clean; production build clean; pure 14 files / 180 tests pass; integration 10 files / 128 tests pass** (against local Docker Postgres, synthetic data). See `TDD.md` for the strategy, coverage, and known gaps.
+Current status (verified in this repo state): **typecheck clean; production build clean; pure 14 files / 182 tests pass; integration 10 files / 128 tests pass** (against local Docker Postgres, synthetic data). See `TDD.md` for the strategy, coverage, and known gaps.
 
 ## Security & privacy posture
 

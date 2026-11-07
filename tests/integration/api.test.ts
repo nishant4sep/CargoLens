@@ -390,10 +390,15 @@ describe("review workflow on SHP-24811 (rows 12, 13, 10)", () => {
 
 describe("approval + export gates (rows 14–17)", () => {
   it("approve unready (DRAFT, no docs) → 409 with the EXACT missing criteria", async () => {
-    const created = await prisma.shipment.findFirstOrThrow({ where: { ref: { not: { in: ["SHP-24811", "SHP-24812"] } } } });
+    // Self-contained precondition (no reliance on other tests' side effects) and
+    // valid regardless of non-fixture rows in a shared dev DB.
+    const execUser = await prisma.user.findUniqueOrThrow({ where: { email: EXEC } });
+    const draft = await prisma.shipment.create({
+      data: { ref: `SHP-T-UNREADY-${Date.now()}`, status: "DRAFT", createdById: execUser.id },
+    });
     const res = await approveRoute.POST(
-      req(`/api/shipments/${created.id}/approve`, { method: "POST", cookie: mgrCookie }),
-      ctx({ id: created.id }),
+      req(`/api/shipments/${draft.id}/approve`, { method: "POST", cookie: mgrCookie }),
+      ctx({ id: draft.id }),
     );
     expect(res.status).toBe(409);
     const body = (await jsonOf(res)) as { error: { code: string; details: { status: string; unresolvedBlockingChecks: unknown[] } } };
@@ -507,7 +512,12 @@ describe("approval + export gates (rows 14–17)", () => {
   });
 
   it("no export exists → latest 404", async () => {
-    const fresh = await prisma.shipment.findFirstOrThrow({ where: { ref: { not: { in: ["SHP-24811", "SHP-24812"] } } } });
+    // Self-contained precondition: a shipment with no export record, independent
+    // of other tests and of non-fixture rows in a shared dev DB.
+    const execUser = await prisma.user.findUniqueOrThrow({ where: { email: EXEC } });
+    const fresh = await prisma.shipment.create({
+      data: { ref: `SHP-T-NOEXP-${Date.now()}`, status: "DRAFT", createdById: execUser.id },
+    });
     const res = await exportLatestRoute.GET(
       req(`/api/shipments/${fresh.id}/export/latest`, { cookie: execCookie }),
       ctx({ id: fresh.id }),
