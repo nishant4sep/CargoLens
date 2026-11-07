@@ -1,133 +1,120 @@
 # CargoLens
 
-Human-in-the-loop import-documentation workbench for a customs broker: drop in a shipment's
-invoice, packing list and bill of lading → a vision AI drafts every field with a confidence
-score and page-level source reference → **deterministic code** runs cross-document checks →
-the executive confirms or corrects against the document side-by-side → the manager approves →
-export to the filing software's CSV layout is **impossible from the server** until every
-required field is human-cleared and every blocking check is resolved. Every correction lands
-in an append-only audit ledger that powers accuracy analytics per field and per supplier.
+Human-in-the-loop import-documentation workbench for a customs broker. Upload a shipment's **Commercial Invoice**, **Packing List**, and **Bill of Lading** → an AI provider **drafts** fields (with self-reported confidence and page/excerpt evidence) → **deterministic code** runs cross-document checks → an executive confirms or corrects values against the document → a manager approves → CSV export is **impossible from the server** until every required field is human-cleared and every blocking check is resolved. Every meaningful action lands in an append-only audit ledger.
 
-> **The rule in one line: AI drafts, code validates, humans confirm, software gates.**
+> **The rule:** AI drafts, code validates, humans confirm, software gates. The human confirmation is authoritative; the export gate is enforced server-side (state machine + engine), never by the UI.
 
-Built for an Isocode Software Engineering take-home (brief: customs broker, Nhava Sheva).
-An accompanying private engineering notebook records every decision, command and test
-result; it is intentionally kept outside this repository.
+Built for an Isocode Software Engineering take-home (customs broker, Nhava Sheva). Synthetic demo data only — no real customer documents.
 
-## Status (honest build log)
+## Features (implemented)
 
-| Layer | State |
-|---|---|
-| Pure engines (cross-checks, numeric, normalize, state machine) | ✅ Built, **59/59 unit tests passing** |
-| Prisma schema (9 domain models + 8 enums, invariants in DB constraints) | ✅ **Migrated** — `init` applied; verified 10 tables in the live DB (9 domain + `_prisma_migrations`) |
-| REST API, document storage, AI pipeline, review UI, export | ⬜ Next phases |
-| Full test suite grows per feature | planned: integration (real Postgres) + 2 Playwright E2E |
+- **Auth & roles:** email/password via `better-auth` (Prisma adapter). Roles `EXECUTIVE` / `MANAGER` are server-assigned; manager-only approval, export gated by server state/engine.
+- **Shipments:** create/list (status filter + ref search), detail aggregate (docs, fields, line items, checks, approval, latest export, metrics).
+- **Private document storage:** content-sniffed upload (PDF/JPEG/PNG magic bytes, never browser MIME), 10 MB, per-type uniqueness (409), randomized storage names, sha256; files served only through an authorized, short-lived signed file token — no public URLs. Local-disk seam today (`STORAGE_DIR`), swappable to private object storage for production.
+- **AI extraction (Phase 5, committed):** explicit per-document “Extract with AI” (`POST /api/documents/:id/extract`). Provider seam (`RawExtractionSchema` strict over the 19-key dictionary — no invented keys/sums; confidence ∈ [0,1], self-reported/not a gate; page + verbatim excerpt evidence; `null` absent, `unreadable` explicit). Gemini REST provider (no SDK): key in `x-goog-api-key` header (never URL/log/response), structured JSON output, `temperature: 0`, 120s timeout, transient retry/backoff, a transcription-only prompt (NEVER calculates — the cross-check engine owns arithmetic). A deterministic, **test-only** stub (self-identifies `NOT AI`, refuses outside a test runtime) powers automated tests; it never masquerades as AI.
+- **Extraction guarantees:** 503 (with nothing written) when unconfigured; machine-audited claim (`EXTRACTION_STARTED`); provider I/O outside transactions; schema-validate + one repair retry; the **AI layer is replaced wholesale** on re-run while `CONFIRMED/CORRECTED/MANUAL_ENTERED` rows are **never overwritten**; values normalized through the existing strict normalizer (never guessed; unparseable reported, not stored); whole-doc unreadable → terminal, workflow continues via manual entry; provider failure → `FAILED` + audited + retryable (never a zombie); 15-min stale-PROCESSING guard; the same terminal-count/DOCS_REACHED_TERMINAL/recompute ladder as manual entry. Recomputes cross-checks; audits record `via:"AI"` + provider name.
+- **Deterministic cross-checks (9 rules):** required fields, line arithmetic, invoice total vs line sum, quantity match (invoice↔packing list), package counts (packing list↔BOL), gross-weight consistency (tolerance-based), net≤gross, container consistency (ISO 6346 form + cross-doc), currency consistency. Pure engine, FAIL cites accusing fields; unresolved BLOCKING fails lock approval/export.
+- **Review UI:** side-by-side document preview (signed file), extracted fields with confidence (low-confidence flagged) and evidence excerpt/page, confirm/correct (server-validated; 422 shown verbatim), manual entry, resolve BLOCKING check with a note, deterministic check results with expected/actual/difference.
+- **Manager approval & gated export:** approve only from `READY_FOR_APPROVAL` (manager-only); export only when approved and engine-clean (`cargolens-csv-v1`, deterministic, re-downloadable). `EXPORTED` is terminal for writes.
+- **Audit trail & reporting:** append-only audit of extraction, confirmations/corrections, check recomputes, resolutions, approval, export — rendered verbatim. Accuracy/workload report (correction/workload/blocking/open counts) with honest metrics (no fabricated “AI accuracy”; verified accuracy empty until a labeled ground-truth corpus exists).
 
-`npm run test` output at last run: `Test Files 4 passed (4), Tests 59 passed (59)`.
-No test result is ever reported without it having actually been run — the same discipline
-applies to every claim in this README.
+## Tech stack
 
-## Tech stack & why
+- **Next.js 16.4.5** (App Router, Turbopack) + **React 19** + **TypeScript** — UI, route handlers, services, pure engines in one process.
+- **PostgreSQL** + **Prisma 7.10.1** (`@prisma/adapter-pg`) — relational model (shipments→documents→typed fields/line items, checks, audits, exports) with uniqueness/enum/decimal constraints.
+- **better-auth 1.7.16** (Prisma adapter) — session auth, server-assigned roles.
+- **Zod** — validation at trust boundaries (DTOs, AI response schema).
+- **Vitest** — pure + integration suites.
+- **Tailwind v4** — restrained UI.
 
-- **Next.js 16 (App Router) + TypeScript** — one deployable process: UI, REST route handlers,
-  services, pure engines. One language, India-region function pinning on Vercel (`bom1`).
-- **PostgreSQL via Prisma** — the product's value is relational: shipments → documents →
-  typed fields, uniqueness invariants (one invoice per shipment; one row per field key),
-  transactional multi-table writes (field edit + audit + checks + status).
-- **Vitest** — engines are pure functions, so the arithmetic debt of this domain
-  (money, weights, tolerances) is paid in fast, exact unit tests first.
-- **Zod** (from the next phases) — one validation grammar at every trust boundary:
-  request bodies, AI structured output, env vars.
-- No queues, no microservices: 7-day scale is < 10k shipments/year. The seams to extract
-  a background worker later already exist (per-document status, one pipeline module).
-
-## The engines (the "hard part" of the brief)
-
-All cross-check logic lives in pure TypeScript with no I/O:
+## Architecture (high level)
 
 ```
-src/server/engines/
-  crosschecks.ts    9 deterministic rules (CV-1..CV-8), FAIL cites the accusing fields
-  numeric.ts        exact integer math on the "milli" scale (×1000), BigInt products
-  normalize.ts      lenient document-text → typed value layer (money/weight/date/Incoterm)
-  state-machine.ts  6 shipment states; approval is auto-revoked by later writes
+src/app/                 App Router pages + REST route handlers (thin: auth → service → envelope)
+  (app)/shipments/...    review screen, dashboard, accuracy report
+  api/...                row-1..19 style endpoints (shipment, upload, extract, review, approve, export, audit)
+src/components/          client components (upload, extract button, fields/preview, approval/export, manual entry)
+src/lib/                 shared types (19-key field dictionary + kinds), tolerances, envelope/format helpers
+src/server/
+  engines/               PURE: crosschecks, normalize, numeric (milli/BigInt), state-machine
+  services/              business logic (Prisma + audits + state transitions): shipments, review, extract, approve, export
+  ai/                    provider seam + RawExtractionSchema + gemini REST + test-only stub + synthetic PDFs
+  storage.ts             PRIVATE storage seam (local disk; swap to object storage) + signed file tokens
+  http.ts, dto.ts        error envelope, auth, Zod DTOs
+prisma/schema.prisma     9 domain models + enums, migrations
+tests/engines,tests/ui   pure tests (no DB)
+tests/integration        real-Postgres tests (sequential files)
 ```
 
-Key contracts (deliberate, documented, tested):
+Key seams: `server/storage.ts` (local → private object storage), `server/ai/provider.ts` (Gemini → other paid, DPA-backed provider), `server/engines/*` (pure, no I/O).
 
-- **Scale contract** — every numeric engine input is an exact integer at 3-decimal
-  precision ("milli units"): money `USD 6.80 → 6800`, weights in grams `3,120 kg → 3,120,000`,
-  quantities `2400 → 2,400,000`. IEEE floats can't represent `0.1`; financial cross-checks
-  on floats produce false PASS/FAIL — the classic first bug in this domain.
-- **Tolerance centralization** — `src/lib/tolerances.ts` is the single file of numeric
-  judgement (e.g. weights: PASS iff Δ ≤ max(2,000 g, 0.3% × min weight); the brief's sample
-  shipment Δ45 kg on a 3,120 kg base must FAIL, a 3 kg scale-noise case must PASS).
-- **Effective-documents gate** — only snapshots that are *both uploaded and readable*
-  participate in comparison rules; a missing/unreadable document is solely reported by the
-  required-fields rule. A corrupted document's stale fields must never silently sail
-  through checks.
-- **AI never runs here** — the engine consumes typed values already normalized from
-  document text; determinism is what makes FAIL messages explainable and testable.
+## Setup (local)
 
-## Getting started
+**Prereqs:** Node 20+, Docker (for local Postgres).
 
 ```bash
 npm install
+cp .env.example .env
+# fill DATABASE_URL, BETTER_AUTH_SECRET (>=32 chars), BETTER_AUTH_URL=http://localhost:3000,
+# SEED_DEMO_PASSWORD (and GEMINI_API_KEY only when running a live extraction — see below)
 
-cp .env.example .env   # fill DATABASE_URL etc. (values are per-environment, never committed)
+docker compose up -d                         # Postgres → cargolens-db (dev only)
+npx prisma migrate deploy                    # apply migrations
+SEED_SYNTHETIC=true npm run seed             # idempotent synthetic demo data (refuses if not true)
 
-docker compose up -d   # local Postgres 16 → container cargolens-db (development only)
-
-npm run dev            # Next.js app
-npm run test           # engine unit tests (vitest)
-npm run test:watch
-npm run typecheck      # tsc --noEmit
-npm run lint
+npm run dev                                  # http://localhost:3000
+# production-mode local run (reliable demo): npm run build && npm run start
 ```
 
-Prisma is pinned exactly to **7.10.1**: the first migration (`prisma/migrations/…_init`) is
-already applied, so an empty database is provisioned with `npx prisma migrate deploy`.
-The seed script lands in the next phase. Schema design: `prisma/schema.prisma` — constraints
-like `unique(shipmentId, type)` per document type and `unique(documentId, fieldKey)` per
-field are part of the correctness story. Prisma 7 note: the connection URL is configured in
-`prisma.config.ts` (read from `.env`), no longer in the schema's `datasource` block.
+**Demo accounts (created by seed):** `exec@demo.cargolens.in` (EXECUTIVE) and `manager@demo.cargolens.in` (MANAGER). The sign-in page displays demo credentials for the local demo; the password is the `SEED_DEMO_PASSWORD` you set (never committed). Roles are server-assigned.
+
+## Demo workflow (synthetic data only)
+
+1. Sign in (manager or executive).
+2. Create a shipment (or open seeded `SHP-24811` / `SHP-24812`).
+3. Upload the 3 synthetic PDFs (Invoice, Packing List, B/L). A deterministic generator (`src/server/ai/synthetic-pdf.ts`) builds them from fixture ground truth — no real customer documents.
+4. On each document tab, click **Extract with AI** (explicit; no auto-run). _Live Gemini requires a billed `GEMINI_API_KEY` set server-side and a paid tier whose terms exclude training on submitted content — otherwise the route returns **503** before writing anything; never faked. The deterministic stub is **test-only** and self-identifies._
+5. Review extracted fields (confidence + evidence excerpt/page), confirm or correct against the document preview; resolve any BLOCKING discrepancy with a note.
+6. When the shipment reaches **Ready for approval**, a **MANAGER** approves.
+7. Generate/download the **CSV export** (gated; `cargolens-csv-v1`).
+8. Inspect the **Audit trail** (extraction events show `via:"AI"` + provider name) and the **Accuracy/workload report**.
+
+Seed facts: `SHP-24812` is the clean, zero-blocking story; `SHP-24811` carries the planted 45 kg gross-weight discrepancy (`GROSS_WEIGHT_CONSISTENCY` FAIL) so the gate/resolve flow is exercisable.
+
+## Tests
+
+```bash
+npm run test        # pure suites (no DB): engines, seed fixtures, UI helpers
+npm run test:seed   # integration (real Postgres, sequential) — needs cargolens-db healthy
+npm run typecheck   # tsc --noEmit
+npm run build       # production build
+```
+
+Current status (verified in this repo state): **typecheck clean; production build clean; pure 14 files / 180 tests pass; integration 10 files / 128 tests pass** (against local Docker Postgres, synthetic data). See `TDD.md` for the strategy, coverage, and known gaps.
 
 ## Security & privacy posture
 
-*Design commitments this build will be graded against — where each one lands, the status
-table above and the test suite are the evidence. Nothing on this list counts as shipped
-until it exists.*
+- **AuthZ server-side:** every route checks the session; role checks on manager actions; UI is never the gate. The state machine + engine gate approval/export.
+- **Private documents:** magic-byte sniffed, size-limited, randomized names, sha256; read only via a short-lived signed token minted after authorization; no public object URLs. Production must use **persistent private** object storage (never ephemeral container disk).
+- **AI data handling:** the live provider is called server-side; the API key is read from env and sent in a header — never exposed to the browser, never logged, never committed. **Paid tier only** (unpaid tiers permit training/reviewer access — rejected). **Residency is not guaranteed in-India** by the paid API tier; disclosed honestly — the production upgrade is an enterprise DPA / in-region processing path (e.g., Vertex AI / Azure OpenAI) under a client-signed DPA. See `deployment.md`.
+- **DPDP-minded:** synthetic demo data only, data minimization, no third-party trackers. Retention/erasure is a documented follow-up, not a claimed shipped feature.
+- **Secrets:** `.env*` git-ignored (except `.env.example`); no keys in source/logs/responses.
 
-- Role-based access is enforced server-side on every route (Executive vs Manager);
-  UI state is UX, never the gate. Demo accounts only, synthetic seed data only.
-- Uploaded documents live in private storage; reads happen exclusively through short-lived
-  signed URLs minted after authorization.
-- Uploads validated by magic bytes and size, never by browser-declared MIME types.
-- Secrets only in environment variables; `.env*` files are git-ignored (except `.env.example`).
-- **Hosting in India** (Vercel functions pinned to Mumbai `bom1`), and an AI provider on a
-  **paid tier whose terms explicitly exclude training on submitted content**. The unpaid
-  tiers of any provider are disqualified by their own reviewer-access clauses. Known limit,
-  disclosed rather than hidden: the paid tier does not guarantee India-resident processing —
-  an enterprise DPA route is the documented production upgrade.
-- Importer contact data is personal data under India's DPDP Act 2023: data minimization,
-  purpose limitation, no third-party trackers, retention/erasure handled as a designed
-  follow-up rather than a claimed feature.
+## Deployment
 
-## Repo layout
+See **`deployment.md`** for the full runbook (env vars, migrations, persistent private storage, India-region hosting, build/start, troubleshooting) and an honest note on what was/wasn’t provisioned in this environment. **Do not** deploy with ephemeral document storage or public file URLs.
 
-```
-prisma/            schema (Postgres) — migrations land with the DB bring-up
-src/app/           Next.js App Router (UI + /api route handlers; landing next phases)
-src/lib/           shared types (field dictionary, milli scale contract), tolerances, zod
-src/server/
-  engines/         PURE logic: state machine, cross-checks, numeric, normalize
-  services/        business logic (owns Prisma access) — next phase
-  ai/              provider client + extraction pipeline — later phase
-tests/             vitest unit suites per engine (integration + E2E join per phase)
-```
+## Known limitations
 
-## Design commitments (counted as much as features in the brief)
+- **Live Gemini extraction requires a billed, configured `GEMINI_API_KEY`** (and model/params verified at run time). In this repo state it is unconfigured → the route returns 503 (by design, nothing written). Automated tests prove the pipeline via a deterministic, self-identifying, test-only stub — **never** represented as live AI output.
+- **AI is probabilistic:** confidence is self-reported (guidance, never a gate); the model may miss/misread fields — hence mandatory human confirmation and deterministic checks. No arithmetic delegated to the model.
+- **In-region processing not guaranteed** by the paid API tier (training excluded) — disclosed; enterprise DPA path documented.
+- Seeded documents use synthetic `synthetic://` storage paths (no real bytes) — the upload→extract flow on real PDFs is the verified path for user uploads.
+- Single-process, sync extraction (sufficient at this scale); a background job variant is the documented scale-up path. No cross-region failover.
 
-Restrained palette, generous whitespace, clear type hierarchy, and one operating principle:
-the review screen is used all day, so uncertainty must be obvious at a glance and every
-action must be one keystroke or one click away.
+## Documentation
+
+- `TDD.md` — test strategy, suites, verification evidence, gaps.
+- `deployment.md` — deployment runbook and env/storage/region notes.
+- `DEMO.md` — step-by-step demo walkthrough and roles.
+- `prisma/schema.prisma` — data model & constraints.
