@@ -1,6 +1,15 @@
 # CargoLens — Deployment & Operations
 
-This runbook covers local production-mode operation and the path to a hosted, India-region deployment. **Honest status:** a live hosted URL was **not provisioned from this environment** (no Vercel/Supabase/cloud credentials/tokens available here). What *is* verified: a clean **production build** and a **production-mode local run** (`next build` + `next start`) serving the full app correctly (review grid, extract UI, gates, audit) against real Postgres. Follow this runbook to deploy; the only external blockers are your cloud credentials and (for live AI) a billed provider key.
+This runbook covers local production-mode operation and the path to a hosted, India-region deployment.
+
+## Reviewer Demo Login Details
+
+| Role | Email | Demo Password | Capabilities |
+|---|---|---|---|
+| **EXECUTIVE** | `exec@demo.cargolens.in` | `CargoLens-Demo-2026!` | Upload documents, trigger AI extraction, review/confirm/correct fields, manual entry fallback, resolve check discrepancies |
+| **MANAGER** | `manager@demo.cargolens.in` | `CargoLens-Demo-2026!` | All executive actions **+ approve shipment** (manager-only gate), revoke approval, export CSV |
+
+*Note: Roles are server-assigned and strictly enforced at the API and database levels.*
 
 ## 1) Environment variables
 

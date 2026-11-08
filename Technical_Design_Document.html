@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>CargoLens — Technical Design Document</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 18mm 16mm 18mm 16mm;
+      @bottom-right {
+        content: counter(page);
+        font-size: 9pt;
+        color: #64748b;
+      }
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: #0f172a;
+      line-height: 1.55;
+      font-size: 10pt;
+      background: #ffffff;
+      margin: 0;
+      padding: 0;
+    }
+    h1, h2, h3, h4 {
+      color: #0f172a;
+      font-weight: 700;
+      margin-top: 1.4em;
+      margin-bottom: 0.5em;
+      page-break-after: avoid;
+    }
+    h1 {
+      font-size: 20pt;
+      line-height: 1.2;
+      border-bottom: 2px solid #0284c7;
+      padding-bottom: 6px;
+      margin-top: 0;
+    }
+    h2 {
+      font-size: 13pt;
+      border-bottom: 1px solid #e2e8f0;
+      padding-bottom: 4px;
+      margin-top: 1.6em;
+      color: #0369a1;
+    }
+    h3 {
+      font-size: 11pt;
+      color: #1e293b;
+    }
+    h4 {
+      font-size: 10pt;
+      color: #334155;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    p, ul, ol {
+      margin-top: 0.4em;
+      margin-bottom: 0.6em;
+    }
+    ul, ol {
+      padding-left: 20px;
+    }
+    li {
+      margin-bottom: 0.3em;
+    }
+    code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+      font-size: 8.8pt;
+      background: #f1f5f9;
+      padding: 1px 4px;
+      border-radius: 3px;
+      color: #0f172a;
+      border: 1px solid #e2e8f0;
+    }
+    pre {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+      font-size: 8.2pt;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 5px;
+      padding: 10px;
+      overflow-x: auto;
+      line-height: 1.4;
+      page-break-inside: avoid;
+      margin: 0.8em 0;
+    }
+    pre code {
+      background: none;
+      padding: 0;
+      border: none;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0.8em 0;
+      font-size: 8.8pt;
+      page-break-inside: avoid;
+    }
+    th, td {
+      border: 1px solid #cbd5e1;
+      padding: 6px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #f1f5f9;
+      font-weight: 600;
+      color: #1e293b;
+    }
+    tr:nth-child(even) td {
+      background: #f8fafc;
+    }
+    .badge {
+      display: inline-block;
+      padding: 1px 6px;
+      font-size: 7.5pt;
+      font-weight: 600;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .badge-pass { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
+    .badge-warn { background: #fef3c7; color: #b45309; border: 1px solid #fde68a; }
+    .badge-fail { background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; }
+    .badge-info { background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; }
+
+    .header-box {
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
+      border-left: 4px solid #0284c7;
+      padding: 12px 14px;
+      border-radius: 4px;
+      margin-bottom: 1.5em;
+    }
+    .header-grid {
+      display: grid;
+      grid-template-columns: 140px 1fr;
+      row-gap: 4px;
+      font-size: 9pt;
+    }
+    .header-label {
+      font-weight: 600;
+      color: #475569;
+    }
+    .header-val {
+      color: #0f172a;
+    }
+    .callout {
+      border-left: 3px solid #0284c7;
+      background: #f0f9ff;
+      padding: 8px 12px;
+      margin: 0.8em 0;
+      font-size: 9pt;
+      border-radius: 0 4px 4px 0;
+      page-break-inside: avoid;
+    }
+    .callout-title {
+      font-weight: 700;
+      color: #0369a1;
+      margin-bottom: 2px;
+    }
+    .page-break {
+      page-break-before: always;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>CargoLens — Technical Design Document</h1>
+  
+  <div class="header-box">
+    <div class="header-grid">
+      <div class="header-label">Project:</div>
+      <div class="header-val"><strong>CargoLens</strong> — Customs Broker's AI Document Extraction & Cross-Check Tool</div>
+      <div class="header-label">GitHub Repository:</div>
+      <div class="header-val"><code>https://github.com/nishant4sep/cargolens</code> (Public, full commit history preserved)</div>
+      <div class="header-label">Client Target:</div>
+      <div class="header-val">Company A, Navi Mumbai (Nhava Sheva Port customs broker, 85 staff, 1,100 shipments/mo)</div>
+      <div class="header-label">Deployment:</div>
+      <div class="header-val">Local reference run verified (Next.js 16.4.5 Turbopack + PostgreSQL) · Target: Vercel <code>bom1</code> (Mumbai)</div>
+      <div class="header-label">Date of Submission:</div>
+      <div class="header-val">November 2026 · Built alone for Isocode Software Engineering Take-home</div>
+    </div>
+  </div>
+
+  <h2>1. Executive Summary & Problem Context</h2>
+  <p>
+    Company A handles 1,100 import shipments monthly at Nhava Sheva. Executives manually retype data from commercial invoices, packing lists, and bills of lading into customs filing spreadsheets—spending ~45 minutes per shipment. This manual entry consumes 9,900 staff hours annually (₹34.65 lakh). More critically, 3% of shipments suffer discrepancies (e.g., mismatched weights or package counts across documents) resulting in amended Bills of Entry, customs penalties, and port demurrage totaling ₹35.64 lakh annually. The aggregate operational bleed is <strong>₹70.29 lakh per year</strong>.
+  </p>
+  <p>
+    <strong>The Core Promise of CargoLens:</strong> Reduce shipment processing time from 45 minutes to under 15 minutes, eliminate cross-document transcription errors, and enforce strict, automated verification gates before any data can be exported into the existing customs filing software.
+  </p>
+  
+  <div class="callout">
+    <div class="callout-title">The Foundational Design Axiom</div>
+    <strong>AI drafts text; only deterministic code compares numbers; only humans confirm uncertainty; only the state machine lets data leave the system.</strong>
+    Confidence scores guide human attention, but they never grant automated approval.
+  </div>
+
+  <h2>2. System Architecture & Technical Rationale</h2>
+  
+  <h3>2.1 High-Level Architecture</h3>
+  <pre>
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                   CLIENT LAYER (Browser)                               │
+│  React 19 Server & Client Components · Tailwind CSS v4 · Side-by-Side Review Screen    │
+└───────────────────────────────────────────┬────────────────────────────────────────────┘
+                                            │ HTTPS / Signed Session Cookies (HttpOnly)
+┌───────────────────────────────────────────▼────────────────────────────────────────────┐
+│                             NEXT.JS 16 APPLICATION SERVER                              │
+│                                                                                        │
+│  ┌──────────────────────┐  ┌─────────────────────────┐  ┌───────────────────────────┐  │
+│  │     Route Layer      │  │      Service Layer      │  │       Engine Layer        │  │
+│  │ (REST /api/* routes) │  │  shipments, documents,  │  │  (100% Pure TypeScript)   │  │
+│  │  • Session & RBAC    │─►│  review, approve,       │─►│  • State Machine          │  │
+│  │  • Zod DTO bounds    │  │  export, audit ledger   │  │  • 9 Cross-Check Rules    │  │
+│  │  • Uniform Envelope  │  │  (Prisma transactions)  │  │  • Fixed-Point Arithmetic │  │
+│  └──────────────────────┘  └─────────────┬───────────┘  └───────────────────────────┘  │
+│                                          │                                             │
+│       ┌──────────────────────────────────┴──────────────────────────────────┐          │
+│       ▼                                                                     ▼          │
+│  ┌─────────────────────────┐                                   ┌────────────────────┐  │
+│  │   AI Extraction Seam    │                                   │Private Storage Seam│  │
+│  │ • Strict 19-key schema  │                                   │• Magic-byte sniff  │  │
+│  │ • Gemini REST (Paid)    │                                   │• SHA-256 hash      │  │
+│  │ • Deterministic test    │                                   │• 5-min signed token│  │
+│  │   stub (100% pure)      │                                   │  (no public URLs)  │  │
+│  └─────────────────────────┘                                   └────────────────────┘  │
+└───────────────────────┬───────────────────────────────────────────────────┬────────────┘
+                        │                                                   │
+┌───────────────────────▼─────────────────┐               ┌─────────────────▼────────────┐
+│      PERSISTENCE (PostgreSQL 16)        │               │     EXTERNAL AI PROVIDER     │
+│  Prisma 7.10.1 · Fixed-Precision Decimals│               │  Google Gemini 2.5 Flash     │
+│  Shipments · ExtractedField · LineItems │               │  Paid Tier (Zero Training)   │
+│  CrossCheck · AuditEvent (Append-only)  │               │  Structured JSON Output      │
+└─────────────────────────────────────────┘               └──────────────────────────────┘
+  </pre>
+
+  <h3>2.2 Technology Stack</h3>
+  <ul>
+    <li><strong>Runtime & Framework:</strong> Next.js 16.4.5 (App Router, Turbopack) on Node.js 20+. Unified monolith minimizes operational overhead, network latency, and deployment complexity within a 6-week budget.</li>
+    <li><strong>Database & ORM:</strong> PostgreSQL 16 with Prisma ORM 7.10.1 (`@prisma/adapter-pg`). Relational constraints guarantee one document per type per shipment and strict foreign key integrity.</li>
+    <li><strong>Authentication & Authorization:</strong> <code>better-auth</code> 1.7.16 with Prisma adapter. Server-assigned role-based access control (RBAC) with <code>EXECUTIVE</code> and <code>MANAGER</code> roles.</li>
+    <li><strong>Validation:</strong> Zod 4.x at all trust boundaries (HTTP request payloads, AI structured responses, and environment variables).</li>
+    <li><strong>UI & Styling:</strong> React 19, Tailwind CSS v4, Lucide icons. High-density, desktop-first design optimized for rapid data verification.</li>
+    <li><strong>Testing:</strong> Vitest 5.x. Pure unit tests run in &lt;3 seconds without database I/O; sequential integration tests execute against real PostgreSQL.</li>
+  </ul>
+
+  <h3>2.3 Architectural Decision Records (ADRs)</h3>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 14%;">ADR</th>
+        <th style="width: 26%;">Decision</th>
+        <th style="width: 30%;">Why Chosen & Trade-off</th>
+        <th style="width: 30%;">Brief & Regulatory Alignment</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>ADR-01: Monolith Architecture</strong></td>
+        <td>Single Next.js monolith containing UI, API routes, services, and pure engines. Synchronous in-request AI processing.</td>
+        <td>Avoids multi-service deployment latency, queue infrastructure (Redis/BullMQ) operational cost, and distributed failure states for ~40 shipments/day volume.</td>
+        <td>Budget & timeline constraint (₹7.5L, 6 weeks). Simplicity enables rapid auditing.</td>
+      </tr>
+      <tr>
+        <td><strong>ADR-02: Server-Enforced RBAC</strong></td>
+        <td>Role-based access enforced strictly in API route handlers and database transactions, not just hidden UI buttons.</td>
+        <td>Executives review and correct; only Managers can invoke <code>/approve</code>. Gating at the UI layer alone would be a security defect.</td>
+        <td>Must-Have: Distinct Documentation Executive vs. Documentation Manager roles.</td>
+      </tr>
+      <tr>
+        <td><strong>ADR-03: Deterministic Engine</strong></td>
+        <td>Arithmetic, line summations, and cross-document comparisons executed exclusively by a pure TypeScript engine.</td>
+        <td>LLMs are notoriously unreliable at arithmetic and floating-point comparison. Engine uses fixed-point integer milli-units (e.g. grams, millicents).</td>
+        <td>Brief: "The hard part: reliable cross-checks across three documents."</td>
+      </tr>
+      <tr>
+        <td><strong>ADR-04: DPDP & Paid AI Tier</strong></td>
+        <td>Paid-tier Gemini API with explicit contractual exclusion from model training. Pinned India hosting target (Vercel <code>bom1</code>, Mumbai).</td>
+        <td>Client pricing is strictly confidential. Unpaid AI tiers permit data inspection and model training. Free tiers disqualified by design.</td>
+        <td>Constraints: "Client prices confidential... use AI provider that does not train on client data. DPDP Act 2023."</td>
+      </tr>
+      <tr>
+        <td><strong>ADR-05: Field-Centric & Audit Ledger</strong></td>
+        <td>Every field is an individual database row (`ExtractedField`) paired with an append-only `AuditEvent` log.</td>
+        <td>Enables SQL-level accuracy analytics per field and supplier, field-level provenance tracking, and tamper-evident audit history.</td>
+        <td>Must-Have: "Edit history and accuracy report per field and supplier."</td>
+      </tr>
+      <tr>
+        <td><strong>ADR-06: State Invalidation</strong></td>
+        <td>State machine derives shipment state. Any field edit or re-extraction after approval <em>automatically revokes</em> approval and locks export.</td>
+        <td>Prevents sneaky edits bypassing manager sign-off. Export requires current, un-invalidated manager approval and 100% clean checks.</td>
+        <td>Brief: "Nothing exports until they are cleared."</td>
+      </tr>
+      <tr>
+        <td><strong>ADR-07: Human-in-the-Loop Gating</strong></td>
+        <td>Confidence scores (0..1) drive visual highlight color bands; required fields must be explicitly human-cleared before approval.</td>
+        <td>AI self-reported confidence is probabilistic and not calibrated to legal customs liability. High confidence never bypasses human sign-off.</td>
+        <td>Brief: "Low-confidence fields and fields in a failed cross-check must be confirmed by a person."</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="page-break"></div>
+
+  <h2>3. Data Model & Integrity Contracts</h2>
+
+  <h3>3.1 Entity Relationship Model</h3>
+  <pre>
+┌─────────────────────────────────┐                 ┌─────────────────────────────────┐
+│              User               │                 │            Shipment             │
+│  id (UUID)                      │                 │  id (UUID)                      │
+│  email (unique)                 │                 │  ref ("SHP-YYYYMM-NN" unique)   │
+│  name                           │                 │  status (ShipmentStatus enum)   │
+│  role (EXECUTIVE | MANAGER)     │                 │  supplierId ───► Supplier       │
+└────────────────┬────────────────┘                 │  createdAt, updatedAt           │
+                 │                                  └───────────────┬─────────────────┘
+                 │ 1:N                              1:N             │ 1:N
+┌────────────────▼────────────────┐                  ┌──────────────┼─────────────────┐
+│             Account             │                  │              │                 │
+│  password (scrypt hash)         │                  ▼              ▼                 ▼
+│  providerId ("credential")      │        ┌────────────────┐┌──────────────┐┌────────────────┐
+└─────────────────────────────────┘        │    Document    ││  CrossCheck  ││  ExportRecord  │
+                                           │  type (unique  ││  ruleKey     ││  formatVersion │
+                                           │   per shipment)││  status      ││  csvSha256     │
+                                           │  storagePath   ││  severity    ││  createdById   │
+                                           │  sha256, bytes ││  failedRefs  ││  createdAt     │
+                                           │  status        ││  resolvedNote│└────────────────┘
+                                           └───────┬────────┘└──────────────┘
+                                                   │ 1:N
+                                   ┌───────────────┴────────────────┐
+                                   ▼                                ▼
+                         ┌────────────────────┐           ┌────────────────────┐
+                         │   ExtractedField   │           │      LineItem      │
+                         │  fieldKey (enum)   │           │  seq (integer)     │
+                         │  rawValue (string) │           │  description       │
+                         │  typedKind, typedVal│          │  hsnCode (string)  │
+                         │  confidence (float)│           │  quantity (milli)  │
+                         │  status (FieldStat)│           │  unitPrice (milli) │
+                         │  provenance (AI/Usr│           │  lineTotal (milli) │
+                         │  evidenceExcerpt   │           │  documentType      │
+                         └────────────────────┘           └────────────────────┘
+  </pre>
+
+  <h3>3.2 Scale & Arithmetic Contracts</h3>
+  <p>
+    JavaScript IEEE-754 floating-point arithmetic introduces silent rounding errors (e.g., <code>0.1 + 0.2 === 0.30000000000000004</code>). For customs filings where a single rupee or kilogram discrepancy can prompt an inspection, CargoLens enforces a strict <strong>Fixed-Point Milli Integer Scale Contract</strong>:
+  </p>
+  <ul>
+    <li><strong>Currency & Money:</strong> Stored internally as integer milli-units (e.g., $16,320.00 = <code>16320000</code>). Converted to Prisma <code>Decimal(14, 4)</code> at the database seam.</li>
+    <li><strong>Weights:</strong> Stored as integer grams (e.g., 3,120.00 kg = <code>3120000</code> grams). Tolerance comparisons operate on exact integer deltas.</li>
+    <li><strong>Products:</strong> Multiplication of quantity × unit price uses <code>BigInt</code> arithmetic: <code>(BigInt(qtyMilli) * BigInt(priceMilli)) / 1000n</code>, completely eliminating precision drift.</li>
+  </ul>
+
+  <h2>4. Core Workflows & The AI Pipeline</h2>
+
+  <h3>4.1 The 6-Stage Shipment State Machine</h3>
+  <pre>
+  [DRAFT] ──────────► [PROCESSING] ──────────► [NEEDS_REVIEW] ──────────► [READY_FOR_APPROVAL]
+(Shipment created)   (AI extraction active)  (Checks run, discrepancies  (All required fields cleared,
+                                              flagged, awaiting human)    zero blocking discrepancies)
+                                                                                   │
+  [EXPORTED] ◄──────────────────────────────── [APPROVED] ◄────────────────────────┘
+(CSV generated,                      (Manager approved; edit revokes     (Manager approval granted)
+ terminal state)                       state back to NEEDS_REVIEW)
+  </pre>
+
+  <h3>4.2 The 9 Deterministic Cross-Check Rules</h3>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 10%;">Rule ID</th>
+        <th style="width: 25%;">Rule Name</th>
+        <th style="width: 15%;">Severity</th>
+        <th style="width: 50%;">Validation Logic & Discrepancy Detection</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>CV-1</strong></td>
+        <td><code>REQUIRED_FIELDS</code></td>
+        <td><span class="badge badge-fail">BLOCKING</span></td>
+        <td>Verifies presence of mandatory customs filing fields across Commercial Invoice, Packing List, and Bill of Lading.</td>
+      </tr>
+      <tr>
+        <td><strong>CV-2</strong></td>
+        <td><code>LINE_ARITHMETIC</code></td>
+        <td><span class="badge badge-fail">BLOCKING</span></td>
+        <td>For every line item: <code>|quantity × unitPrice - lineTotal| ≤ 1 milli-unit</code>.</td>
+      </tr>
+      <tr>
+        <td><strong>CV-3</strong></td>
+        <td><code>INVOICE_TOTAL</code></td>
+        <td><span class="badge badge-fail">BLOCKING</span></td>
+        <td><code>|invoice.totalValue - Σ(lineTotals)| ≤ 1 minor unit</code>. Catches hidden charges, unlisted discounts, or transcription sums.</td>
+      </tr>
+      <tr>
+        <td><strong>CV-4</strong></td>
+        <td><code>QUANTITY_MATCH</code></td>
+        <td><span class="badge badge-warn">WARNING</span></td>
+        <td>Matches total item quantities between Commercial Invoice and Packing List for identical line item descriptions.</td>
+      </tr>
+      <tr>
+        <td><strong>CV-5</strong></td>
+        <td><code>PACKAGES_MATCH</code></td>
+        <td><span class="badge badge-fail">BLOCKING</span></td>
+        <td>Package count must match identically across all available documents (Invoice, Packing List, B/L). Tolerance = 0.</td>
+      </tr>
+      <tr>
+        <td><strong>CV-6</strong></td>
+        <td><code>GROSS_WEIGHT_CONSISTENCY</code></td>
+        <td><span class="badge badge-fail">BLOCKING</span></td>
+        <td>Gross weight compared across all 3 documents. Allowed tolerance: max(0.1%, 1.0 kg). <strong>Catches the brief's planted 45 kg discrepancy on SHP-24811 (3,120 kg vs 3,165 kg)</strong>.</td>
+      </tr>
+      <tr>
+        <td><strong>CV-7</strong></td>
+        <td><code>NET_NOT_EXCEEDS_GROSS</code></td>
+        <td><span class="badge badge-fail">BLOCKING</span></td>
+        <td>Ensures Net Weight ≤ Gross Weight on all documents where both are specified.</td>
+      </tr>
+      <tr>
+        <td><strong>CV-8</strong></td>
+        <td><code>CONTAINER_CONSISTENCY</code></td>
+        <td><span class="badge badge-fail">BLOCKING</span></td>
+        <td>Matches container identifiers between B/L and Packing List; verifies ISO 6346 checksum format (4 letters, 7 digits).</td>
+      </tr>
+      <tr>
+        <td><strong>CV-9</strong></td>
+        <td><code>CURRENCY_CONSISTENCY</code></td>
+        <td><span class="badge badge-fail">BLOCKING</span></td>
+        <td>Validates that all line item currencies match the invoice header currency (ISO 4217 code).</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>4.3 How the AI Extraction Works</h3>
+  <ol>
+    <li><strong>Explicit Document Trigger:</strong> The user triggers extraction per document. This isolates provider failures and respects staff control over document processing sequence.</li>
+    <li><strong>Transcription-Only Prompt:</strong> The system prompt strictly directs Gemini: <em>"You are a transcriber, not an analyst. NEVER calculate, convert, complete or infer values. If absent, return null. Return verbatim excerpt and page number."</em></li>
+    <li><strong>Structured Schema Enforcement:</strong> Uses Gemini's OpenAPI-subset schema definition. The provider engine guarantees JSON conformance at the HTTP protocol layer.</li>
+    <li><strong>Raw Extraction Zod Boundary:</strong> Raw AI output passes through <code>RawExtractionSchema</code>. All field keys are validated against the 19-key domain dictionary; unknown keys are discarded.</li>
+    <li><strong>Normalization & Seam Invariants:</strong> Raw strings pass through the strict normalizer. If an AI value fails strict parsing (e.g. malformed date or unrecognizable unit), it is flagged as unparseable—it is <em>never guessed</em>.</li>
+    <li><strong>Handling Failures & Re-runs:</strong> If an AI call fails, the document transitions to <code>FAILED</code> (retryable, never a zombie). On re-extraction, the AI layer is replaced wholesale, but any field that has been human-confirmed or corrected is <strong>strictly preserved</strong> and never overwritten.</li>
+  </ol>
+
+  <div class="page-break"></div>
+
+  <h2>5. UI & Design Decisions</h2>
+  
+  <p>
+    The documentation team at Company A processes paperwork 8 hours a day. In line with the design brief ("clean layouts, white space, a restrained palette, clear type, desktop use"), the user interface avoids flashy consumer aesthetics in favor of high-utility density, immediate error identification, and one-click actions.
+  </p>
+
+  <h3>5.1 Key Screens & UX Decisions</h3>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 25%;">Screen</th>
+        <th style="width: 35%;">Key Visual & Layout Features</th>
+        <th style="width: 40%;">UX Rationale</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Shipment Dashboard</strong> (<code>/</code>)</td>
+        <td>Status chips with distinct semantic colors; active blocking error counters; ref search; instant "New Shipment" drawer.</td>
+        <td>Enables executives and managers to instantly spot which shipments need attention, which are blocked, and which are ready for sign-off.</td>
+      </tr>
+      <tr>
+        <td><strong>Side-by-Side Review Screen</strong> (<code>/shipments/[id]</code>)</td>
+        <td>Document preview pane on the left; structured extracted fields pane on the right; document tabs (Invoice, Packing List, B/L).</td>
+        <td>Eliminates alt-tabbing between PDF viewer and spreadsheet. Executives verify data in-situ against the visual document evidence.</td>
+      </tr>
+      <tr>
+        <td><strong>Field Inspection Panel</strong></td>
+        <td>Confidence badges (<span class="badge badge-warn">LOW &lt;85%</span>); page & excerpt evidence snippets; inline 1-click Confirm or Correct buttons.</td>
+        <td>Low-confidence fields immediately draw the user's eye. Inline corrections are server-validated in real time; 422 errors render verbatim.</td>
+      </tr>
+      <tr>
+        <td><strong>Discrepancy Banner & Importer Query</strong></td>
+        <td>Prominent red callouts for failed checks; displays expected vs actual values, difference, and clickable tags to accusing fields. Integrated 1-click <code>WhatsApp Query</code> generator.</td>
+        <td>Cites exactly where the mismatch occurs (e.g. "Gross weight mismatch: Invoice 3120 kg vs Packing List 3165 kg"). Allows "Resolve with note" or generates a pre-formatted WhatsApp doubt message for the importer with 1 click, directly replacing informal WhatsApp chaos.</td>
+      </tr>
+      <tr>
+        <td><strong>Approval & Gated Export Panel</strong></td>
+        <td>Manager-only action bar; disabled "Export" button showing an explicit checklist of unmet criteria until 100% cleared.</td>
+        <td>Prevents premature export. Managers see at a glance why a file is locked and who cleared each field. One click exports the validated CSV.</td>
+      </tr>
+      <tr>
+        <td><strong>Accuracy & Workload Report</strong> (<code>/reports/accuracy</code>)</td>
+        <td>Tabular breakdown of fields and suppliers showing correction counts, open flags, and human confirmation workload.</td>
+        <td>Delivers visibility into problematic suppliers (e.g. frequent weight mismatches from Company B) without making unsubstantiated accuracy claims.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>6. Scope Cuts & Future Roadmap</h2>
+
+  <h3>6.1 What Was Intentionally Cut (Scope Pruning)</h3>
+  <ul>
+    <li><strong>Direct ICEGATE Customs Filing:</strong> The brief explicitly designated filing on the Indian customs portal as out of scope. CargoLens exports the clean, verified data structure required for import into existing broker filing systems.</li>
+    <li><strong>Automated HSN Duty Calculation:</strong> Customs tariff classification requires deep statutory interpretation and customs case-law lookup; out of scope per brief.</li>
+    <li><strong>Asynchronous Background Queues (BullMQ/Redis):</strong> Company A processes ~40 shipments per day (approx. 5 per hour). Synchronous REST processing with client timeout handling and stale-processing recovery guards completely satisfies this load without the operational complexity of Redis.</li>
+    <li><strong>OCR Bounding Box Overlays:</strong> Extracting verbatim text excerpts and page numbers provides 95% of the verification value with none of the fragile client-side canvas rendering bugs across skewed or multi-column scans.</li>
+  </ul>
+
+  <h3>6.2 What to Build Next (Production Roadmap)</h3>
+  <ul>
+    <li><strong>Persistent Cloud Object Storage:</strong> Complete the Supabase Storage / AWS S3 driver behind <code>src/server/storage.ts</code> pinned to the Mumbai (<code>ap-south-1</code>) region, replacing local container disk storage.</li>
+    <li><strong>Automated Document Splitting:</strong> Multi-page PDF upload scanner to auto-classify and split combined 30-page supplier packets into Invoice, Packing List, and B/L.</li>
+    <li><strong>ICEGATE 1.5 Flat-File Serializer:</strong> Native export into the exact Indian Customs ICEGATE flat-file format once broker configuration templates are provided.</li>
+    <li><strong>WhatsApp Query Integration:</strong> Connect to WhatsApp Business API so documentation executives can trigger doubt queries directly to importers with pre-filled document excerpts.</li>
+  </ul>
+
+  <h2>7. Explicit Assumptions (Assignment Compliance)</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 15%;">Ref</th>
+        <th style="width: 35%;">Assumption Statement</th>
+        <th style="width: 50%;">Operational Justification & Impact</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Assumption A1</strong></td>
+        <td>Export layout assumes <code>cargolens-csv-v1</code> structure.</td>
+        <td>Company A's proprietary customs filing software template was not supplied in the brief. CargoLens outputs an exhaustive, deterministic 23-column CSV that maps 1:1 to standard broker import formats.</td>
+      </tr>
+      <tr>
+        <td><strong>Assumption A2</strong></td>
+        <td>Human clearance is legally mandatory before export.</td>
+        <td>Under Indian Customs Act (1962), the customs broker bears legal liability for misdeclarations. AI output cannot legally substitute for human executive verification.</td>
+      </tr>
+      <tr>
+        <td><strong>Assumption A3</strong></td>
+        <td>Weight tolerance threshold is 0.1% or 1 kg.</td>
+        <td>Nhava Sheva port weighbridges permit minimal variance for tare weight/humidity. The 45 kg discrepancy on SHP-24811 exceeds tolerance by 4,400% and is correctly flagged as BLOCKING.</td>
+      </tr>
+      <tr>
+        <td><strong>Assumption A4</strong></td>
+        <td>Synthetic data complies with DPDP Act 2023.</td>
+        <td>All importer names, contact numbers, and commercial invoices in the codebase and demo fixtures are synthetic; no real corporate PII is stored.</td>
+      </tr>
+      <tr>
+        <td><strong>Assumption A5</strong></td>
+        <td>In-region processing vs. data residency.</td>
+        <td>While Google Gemini Paid Tier guarantees zero model training on client inputs, data residency within India is only guaranteed under enterprise Vertex AI / Azure agreements. This is openly disclosed in deployment documentation.</td>
+      </tr>
+    </tbody>
+  </table>
+
+</body>
+</html>

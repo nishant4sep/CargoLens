@@ -498,7 +498,7 @@ export default async function ReviewPage({
                     ) : null}
                   </div>
                   {unresolved && blocking && perms.canResolve ? (
-                    <ResolveCheckButton shipmentId={s.id} checkId={c.id} ruleKey={c.ruleKey} />
+                    <ResolveCheckButton shipmentId={s.id} checkId={c.id} ruleKey={c.ruleKey} shipmentRef={s.ref} detailsText={detailRows.map((r) => `${r.label}: ${r.value}`).join("\n")} />
                   ) : null}
                 </div>
                 {detailRows.length > 0 ? (

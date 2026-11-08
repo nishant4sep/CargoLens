@@ -4,7 +4,14 @@ Human-in-the-loop import-documentation workbench for a customs broker. Upload a 
 
 > **The rule:** AI drafts, code validates, humans confirm, software gates. The human confirmation is authoritative; the export gate is enforced server-side (state machine + engine), never by the UI.
 
-Built for an Isocode Software Engineering take-home (customs broker, Nhava Sheva). Synthetic demo data only — no real customer documents.
+Built for the Customs Broker Document Extraction & Cross-Check take-home (Company A, Nhava Sheva). Synthetic demo data only — no real customer documents.
+
+## Reviewer Quick Start
+
+| Role | Email | Password | Allowed Capabilities |
+|---|---|---|---|
+| **EXECUTIVE** | `exec@demo.cargolens.in` | `CargoLens-Demo-2026!` | Upload documents, trigger AI extraction, review/correct fields, manual entry, draft WhatsApp importer queries, resolve checks |
+| **MANAGER** | `manager@demo.cargolens.in` | `CargoLens-Demo-2026!` | All executive capabilities **+ approve shipment** (manager-only gate), revoke approval, export CSV |
 
 ## Features (implemented)
 
